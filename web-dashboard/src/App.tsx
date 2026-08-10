@@ -27,10 +27,30 @@ export default function App() {
   const [view, setView] = useState<AppView>('dashboard');
   const [callConfig, setCallConfig] = useState<CallConfig | null>(null);
 
-  // Clear any legacy stale session on initial mount so login is always required
+  // Restore a persisted session on initial load when available
   useEffect(() => {
-    localStorage.removeItem('hostelconnect_user_session');
-    sessionStorage.removeItem('hostelconnect_user_session');
+    const storedSession = localStorage.getItem('hostelconnect_user_session');
+    if (!storedSession) {
+      sessionStorage.removeItem('hostelconnect_user_session');
+      return;
+    }
+
+    try {
+      const parsedSession = JSON.parse(storedSession) as UserSession;
+      setCurrentUser(parsedSession);
+      if (parsedSession.role === 'SUPER_ADMIN') {
+        setPortalRole('SUPER_ADMIN');
+        setSelectedTenant(ALL_SCHOOL_TENANTS[0]);
+      } else {
+        setPortalRole('SCHOOL_ADMIN');
+        const matched = ALL_SCHOOL_TENANTS.find(t => t.code === parsedSession.schoolCode) || ALL_SCHOOL_TENANTS[0];
+        setSelectedTenant(matched);
+      }
+      setView('dashboard');
+    } catch {
+      localStorage.removeItem('hostelconnect_user_session');
+      sessionStorage.removeItem('hostelconnect_user_session');
+    }
   }, []);
 
   // Check URL params for direct join (parent opening shared link)
@@ -55,6 +75,9 @@ export default function App() {
 
   const handleLoginSuccess = (session: UserSession) => {
     setCurrentUser(session);
+
+    localStorage.setItem('hostelconnect_user_session', JSON.stringify(session));
+    sessionStorage.setItem('hostelconnect_user_session', JSON.stringify(session));
 
     // Multi-tenant permission logic: Only SUPER_ADMIN can access Super Admin Console & All Tenants
     if (session.role === 'SUPER_ADMIN') {

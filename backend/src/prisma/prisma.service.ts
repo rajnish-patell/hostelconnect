@@ -10,8 +10,12 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
       return;
     }
 
-    await this.$connect();
-    this.connected = true;
+    try {
+      await this.$connect();
+      this.connected = true;
+    } catch (error) {
+      console.warn('Prisma could not connect to the database; continuing without DB-backed services.', error);
+    }
   }
 
   async onModuleDestroy() {

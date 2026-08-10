@@ -1,21 +1,41 @@
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
+import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
+import { APP_GUARD } from '@nestjs/core';
 import { AppModule } from './app.module';
+import { HttpExceptionFilter } from './common/filters/http-exception.filter';
+import { validateEnvironment } from './common/config/environment';
+import helmet from 'helmet';
 
 async function bootstrap() {
+  validateEnvironment();
   const app = await NestFactory.create(AppModule);
 
-  // Global Prefix
   app.setGlobalPrefix('api/v1');
 
-  // CORS
+  app.use(helmet({
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        imgSrc: ["'self'", 'data:', 'https:'],
+        scriptSrc: ["'self'"],
+        styleSrc: ["'self'", "'unsafe-inline'"],
+        connectSrc: ["'self'", 'https:'],
+        objectSrc: ["'none'"],
+        upgradeInsecureRequests: [],
+      },
+    },
+    crossOriginResourcePolicy: { policy: 'same-site' },
+  }));
+
   app.enableCors({
-    origin: '*',
+    origin: process.env.CORS_ORIGIN?.split(',') || ['http://localhost:3000'],
     credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
   });
 
-  // Validation
   app.useGlobalPipes(
     new ValidationPipe({
       whitelist: true,
@@ -23,6 +43,8 @@ async function bootstrap() {
       forbidNonWhitelisted: true,
     }),
   );
+
+  app.useGlobalFilters(new HttpExceptionFilter());
 
   // OpenAPI Swagger Documentation
   const config = new DocumentBuilder()

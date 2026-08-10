@@ -37,12 +37,12 @@ interface AuthScreenProps {
   onLoginSuccess: (session: UserSession) => void;
 }
 
-// Global in-memory credential storage for session resets
-const credentialsStore: Record<string, string> = {
-  'patelrajnish47@gmail.com': 'Rajnish@123',
-  'admin@dps.edu.in': 'admin123',
-  'stu-1001': '4819',
-  '+91 98765 43210': '1234'
+// In-memory demo store used only for local UI flow. This is intentionally non-production and should not be used for real auth.
+const demoCredentialsStore: Record<string, string> = {
+  'demo-super-admin': 'demo-password',
+  'demo-school-admin': 'demo-password',
+  'demo-student': 'demo-pin',
+  'demo-parent': 'demo-pin',
 };
 
 export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
@@ -124,21 +124,21 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
     setAuthRole(role);
     setErrorMsg('');
     if (role === 'SUPER_ADMIN') {
-      setEmailOrCode('patelrajnish47@gmail.com');
+      setEmailOrCode('demo-super-admin');
       setSchoolCodeInput('');
-      setPasswordOrPin(credentialsStore['patelrajnish47@gmail.com'] || 'Rajnish@123');
+      setPasswordOrPin(demoCredentialsStore['demo-super-admin'] || 'demo-password');
     } else if (role === 'SCHOOL_ADMIN') {
-      setEmailOrCode('admin@dps.edu.in');
+      setEmailOrCode('demo-school-admin');
       setSchoolCodeInput('SCH-DAP');
-      setPasswordOrPin(credentialsStore['admin@dps.edu.in'] || 'admin123');
+      setPasswordOrPin(demoCredentialsStore['demo-school-admin'] || 'demo-password');
     } else if (role === 'STUDENT') {
-      setEmailOrCode('STU-1001');
+      setEmailOrCode('demo-student');
       setSchoolCodeInput('SCH-DAP');
-      setPasswordOrPin(credentialsStore['stu-1001'] || '4819');
+      setPasswordOrPin(demoCredentialsStore['demo-student'] || 'demo-pin');
     } else if (role === 'PARENT') {
-      setEmailOrCode('+91 98765 43210');
+      setEmailOrCode('demo-parent');
       setSchoolCodeInput('');
-      setPasswordOrPin(credentialsStore['+91 98765 43210'] || '1234');
+      setPasswordOrPin(demoCredentialsStore['demo-parent'] || 'demo-pin');
     }
   };
 
@@ -162,10 +162,10 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
   // Open forgot password modal
   const handleOpenForgotPassword = () => {
     setForgotRole(authRole);
-    if (authRole === 'SUPER_ADMIN') setForgotInput('patelrajnish47@gmail.com');
-    else if (authRole === 'SCHOOL_ADMIN') setForgotInput('admin@dps.edu.in');
-    else if (authRole === 'STUDENT') setForgotInput('STU-1001');
-    else setForgotInput('+91 98765 43210');
+    if (authRole === 'SUPER_ADMIN') setForgotInput('demo-super-admin');
+    else if (authRole === 'SCHOOL_ADMIN') setForgotInput('demo-school-admin');
+    else if (authRole === 'STUDENT') setForgotInput('demo-student');
+    else setForgotInput('demo-parent');
 
     setForgotStep('request');
     setOtpDigits(['', '', '', '', '', '']);
@@ -314,17 +314,17 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
 
     // Save updated password in session store
     const lookupKey = forgotInput.trim().toLowerCase();
-    credentialsStore[lookupKey] = newPassword;
-    if (forgotRole === 'SUPER_ADMIN') credentialsStore['patelrajnish47@gmail.com'] = newPassword;
-    if (forgotRole === 'SCHOOL_ADMIN') credentialsStore['admin@dps.edu.in'] = newPassword;
-    if (forgotRole === 'STUDENT') credentialsStore['stu-1001'] = newPassword;
-    if (forgotRole === 'PARENT') credentialsStore['+91 98765 43210'] = newPassword;
+    demoCredentialsStore[lookupKey] = newPassword;
+    if (forgotRole === 'SUPER_ADMIN') demoCredentialsStore['demo-super-admin'] = newPassword;
+    if (forgotRole === 'SCHOOL_ADMIN') demoCredentialsStore['demo-school-admin'] = newPassword;
+    if (forgotRole === 'STUDENT') demoCredentialsStore['demo-student'] = newPassword;
+    if (forgotRole === 'PARENT') demoCredentialsStore['demo-parent'] = newPassword;
 
     setForgotStep('success');
   };
 
   // Main Login Handler
-  const handleLogin = (e: React.FormEvent) => {
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg('');
     if (!emailOrCode.trim() || !passwordOrPin.trim()) {
@@ -332,79 +332,43 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
       return;
     }
 
-    const cleanInput = emailOrCode.trim().toLowerCase();
+    const cleanInput = emailOrCode.trim();
     const cleanPass = passwordOrPin.trim();
 
-    if (authRole === 'SUPER_ADMIN') {
-      const validPass = credentialsStore['patelrajnish47@gmail.com'] || 'Rajnish@123';
-      if (cleanInput !== 'patelrajnish47@gmail.com' || cleanPass !== validPass) {
-        setErrorMsg('Access Denied: Invalid Super Admin credentials.');
-        return;
-      }
-    } else if (authRole === 'SCHOOL_ADMIN') {
-      const validPass = credentialsStore['admin@dps.edu.in'] || 'admin123';
-      if (cleanInput !== 'admin@dps.edu.in' || cleanPass !== validPass) {
-        setErrorMsg('Invalid School Admin credentials.');
-        return;
-      }
-    } else if (authRole === 'STUDENT') {
-      const validPass = credentialsStore['stu-1001'] || '4819';
-      if (cleanInput !== 'stu-1001' || cleanPass !== validPass) {
-        setErrorMsg('Invalid Student ID or PIN.');
-        return;
-      }
-    } else if (authRole === 'PARENT') {
-      const validPass = credentialsStore['+91 98765 43210'] || '1234';
-      if (!cleanInput.includes('98765') || cleanPass !== validPass) {
-        setErrorMsg('Invalid Parent Phone or OTP PIN.');
-        return;
-      }
-    }
-
     setIsLoading(true);
-    setTimeout(() => {
-      setIsLoading(false);
-      let session: UserSession;
-      if (authRole === 'SUPER_ADMIN') {
-        session = {
-          id: 'usr_superadmin_rajnish',
-          name: 'Rajnish Patel',
-          emailOrCode: 'patelrajnish47@gmail.com',
-          role: 'SUPER_ADMIN',
-          token: `jwt_super_${Date.now().toString(36)}`
-        };
-      } else if (authRole === 'SCHOOL_ADMIN') {
-        session = {
-          id: 'usr_admin_dps',
-          name: 'DPS School Admin',
-          emailOrCode,
-          role: 'SCHOOL_ADMIN',
-          schoolName: 'Delhi Public School (R.K. Puram)',
-          schoolCode: schoolCodeInput || 'SCH-DAP',
-          token: `jwt_school_${Date.now().toString(36)}`
-        };
-      } else if (authRole === 'STUDENT') {
-        session = {
-          id: 'usr_student_aarav',
-          name: 'Aarav Sharma',
-          emailOrCode,
-          role: 'STUDENT',
-          schoolName: 'Delhi Public School (R.K. Puram)',
-          schoolCode: 'SCH-DAP',
-          token: `jwt_student_${Date.now().toString(36)}`
-        };
-      } else {
-        session = {
-          id: 'usr_parent_rajesh',
-          name: 'Rajesh Sharma',
-          emailOrCode,
-          role: 'PARENT',
-          schoolName: 'Delhi Public School (R.K. Puram)',
-          token: `jwt_parent_${Date.now().toString(36)}`
-        };
+    try {
+      const apiBaseUrl = (import.meta as ImportMeta & { env?: { VITE_API_URL?: string } }).env?.VITE_API_URL || 'http://localhost:4000/api/v1';
+      const response = await fetch(`${apiBaseUrl}/auth/login`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          identifier: cleanInput,
+          password: cleanPass,
+        }),
+      });
+
+      const payload = await response.json();
+      if (!response.ok) {
+        throw new Error(payload.message || 'Authentication failed');
       }
+
+      const session: UserSession = {
+        id: payload.user.id,
+        name: payload.user.fullName || cleanInput,
+        emailOrCode: payload.user.email || cleanInput,
+        role: payload.user.role,
+        schoolCode: authRole === 'SCHOOL_ADMIN' ? schoolCodeInput || 'SCH-DAP' : undefined,
+        token: payload.accessToken,
+      };
+
       onLoginSuccess(session);
-    }, 600);
+    } catch (error) {
+      setErrorMsg(error instanceof Error ? error.message : 'Unable to sign in right now.');
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const roles = [
