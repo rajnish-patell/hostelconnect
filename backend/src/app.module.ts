@@ -1,5 +1,5 @@
 import { Module } from '@nestjs/common';
-import { ConfigModule } from '@nestjs/config';
+import { ConfigModule, ConfigService } from '@nestjs/config';
 import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
 import { APP_GUARD } from '@nestjs/core';
 import { JwtModule } from '@nestjs/jwt';
@@ -39,14 +39,28 @@ import { StatsService } from './modules/stats/stats.service';
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
+      envFilePath: ['.env', '.env.local'],
     }),
     PassportModule,
-    JwtModule.register({
-      secret: process.env.JWT_SECRET || 'dev-secret-key-12345',
-      signOptions: { expiresIn: '7d' },
+    JwtModule.registerAsync({
+      imports: [ConfigModule],
+      inject: [ConfigService],
+      useFactory: (configService: ConfigService) => ({
+        secret: configService.get<string>('JWT_SECRET', 'dev-secret-key-12345'),
+        signOptions: { expiresIn: configService.get<string>('JWT_EXPIRES_IN', '7d') },
+      }),
     }),
-    ThrottlerModule.forRoot({
-      throttlers: [{ ttl: 60000, limit: 120 }],
+    ThrottlerModule.forRootAsync({
+      imports: [ConfigModule],
+      inject: [ConfigService],
+      useFactory: (configService: ConfigService) => ({
+        throttlers: [
+          {
+            ttl: Number(configService.get<string>('THROTTLE_TTL') ?? 60000),
+            limit: Number(configService.get<string>('THROTTLE_LIMIT') ?? 120),
+          },
+        ],
+      }),
     }),
   ],
   controllers: [
