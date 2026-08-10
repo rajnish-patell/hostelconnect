@@ -36,9 +36,13 @@ async function bootstrap() {
   const document = SwaggerModule.createDocument(app, config);
   SwaggerModule.setup('api/docs', app, document);
 
-  const port = process.env.PORT || 4000;
+  const port = Number(process.env.PORT || 4000);
   await app.listen(port);
   console.log(`🚀 HostelConnect Backend running on port http://localhost:${port}/api/v1`);
   console.log(`📚 OpenAPI Documentation available at http://localhost:${port}/api/docs`);
 }
-bootstrap();
+
+bootstrap().catch((error) => {
+  console.error('Failed to start HostelConnect backend', error);
+  process.exit(1);
+});
