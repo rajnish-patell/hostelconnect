@@ -13,6 +13,7 @@ export class CallsService {
     const student = await this.prisma.student.findUnique({
       where: { id: studentId },
       include: {
+        user: true,
         school: {
           include: { callRules: true },
         },
