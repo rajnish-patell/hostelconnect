@@ -741,6 +741,27 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
                   </div>
                 </div>
 
+                {/* Direct Token Helper & Auto-Fill */}
+                <div className="bg-indigo-50/90 border border-indigo-200 rounded-xl p-3 flex items-center justify-between text-xs">
+                  <div className="flex items-center gap-2">
+                    <span className="w-2 h-2 rounded-full bg-indigo-600 animate-pulse" />
+                    <span className="text-indigo-900 font-medium">Your Security Code:</span>
+                    <span className="font-mono font-extrabold text-indigo-700 bg-white px-2.5 py-0.5 rounded border border-indigo-300 text-sm tracking-wider">{generatedOtp}</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (generatedOtp) {
+                        setOtpDigits(generatedOtp.split(''));
+                        otpInputRefs.current[5]?.focus();
+                      }
+                    }}
+                    className="text-[11px] font-bold text-indigo-700 hover:text-indigo-900 bg-white px-2.5 py-1 rounded-lg border border-indigo-300 hover:bg-indigo-50 transition cursor-pointer shadow-xs"
+                  >
+                    Auto-Fill ⚡
+                  </button>
+                </div>
+
                 {/* 6-Box OTP Input */}
                 <div>
                   <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2.5 text-center">
