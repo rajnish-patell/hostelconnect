@@ -32,6 +32,12 @@ jobs:
   build-backend:
     name: Verify Backend & Prisma Schema
     runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: "postgresql://postgres:postgres@localhost:5432/hostelconnect?schema=public"
+      JWT_SECRET: "ci-pipeline-jwt-secret-key-123456789"
+      SUPERADMIN_EMAIL: "patelrajnish47@gmail.com"
+      PORT: 4000
+      NODE_ENV: "test"
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
