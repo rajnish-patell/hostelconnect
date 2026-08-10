@@ -217,7 +217,7 @@ export default function App() {
           /* Student / Parent Portals */
           <div className="flex items-center justify-center min-h-[60vh]">
             <div className="bg-white rounded-2xl border border-slate-200 shadow-xl p-10 sm:p-14 text-center max-w-md w-full">
-              <div className="w-16 h-16 bg-gradient-to-br from-indigo-600 to-cyan-500 rounded-2xl flex items-center justify-center mx-auto mb-6 shadow-lg shadow-indigo-200 text-white">
+              <div className="w-16 h-16 bg-linear-to-br from-indigo-600 to-cyan-500 rounded-2xl flex items-center justify-center mx-auto mb-6 shadow-lg shadow-indigo-200 text-white">
                 <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
               </div>
               <h2 className="text-xl font-extrabold text-slate-900 mb-2">

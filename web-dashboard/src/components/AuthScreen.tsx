@@ -386,7 +386,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-slate-100/70 to-indigo-50/40 flex items-center justify-center p-3 sm:p-6 lg:p-8">
+    <div className="min-h-screen bg-linear-to-br from-slate-50 via-slate-100/70 to-indigo-50/40 flex items-center justify-center p-3 sm:p-6 lg:p-8">
       {/* Background decorative elements */}
       <div className="fixed inset-0 overflow-hidden pointer-events-none">
         <div className="absolute -top-40 -right-40 w-72 sm:w-96 h-72 sm:h-96 bg-indigo-200/30 rounded-full blur-3xl" />
@@ -431,7 +431,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
       <div className="relative w-full max-w-md my-4 sm:my-8">
         {/* Brand Header */}
         <div className="text-center mb-6 sm:mb-8">
-          <div className="inline-flex items-center justify-center w-14 h-14 sm:w-16 sm:h-16 bg-gradient-to-br from-indigo-600 to-cyan-500 rounded-2xl shadow-xl shadow-indigo-500/25 mb-3 sm:mb-4 text-white">
+          <div className="inline-flex items-center justify-center w-14 h-14 sm:w-16 sm:h-16 bg-linear-to-br from-indigo-600 to-cyan-500 rounded-2xl shadow-xl shadow-indigo-500/25 mb-3 sm:mb-4 text-white">
             <Shield size={28} className="sm:w-8 sm:h-8" />
           </div>
           <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-slate-900">
@@ -559,7 +559,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
               <button
                 type="submit"
                 disabled={isLoading}
-                className="w-full flex items-center justify-center gap-2.5 py-3.5 px-5 rounded-xl bg-gradient-to-r from-indigo-600 via-indigo-600 to-indigo-700 hover:from-indigo-700 hover:to-indigo-800 text-white font-bold text-sm shadow-lg shadow-indigo-500/30 hover:shadow-indigo-500/40 hover:scale-[1.01] active:scale-[0.99] transition-all duration-200 disabled:opacity-60 cursor-pointer min-h-[44px]"
+                className="w-full flex items-center justify-center gap-2.5 py-3.5 px-5 rounded-xl bg-linear-to-r from-indigo-600 via-indigo-600 to-indigo-700 hover:from-indigo-700 hover:to-indigo-800 text-white font-bold text-sm shadow-lg shadow-indigo-500/30 hover:shadow-indigo-500/40 hover:scale-[1.01] active:scale-[0.99] transition-all duration-200 disabled:opacity-60 cursor-pointer min-h-11"
               >
                 {isLoading ? (
                   <span>Verifying credentials...</span>
@@ -842,7 +842,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
                   <button
                     type="submit"
                     disabled={isLockedOut}
-                    className="flex-1 flex items-center justify-center gap-2 py-3 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow-md shadow-emerald-200 transition cursor-pointer disabled:opacity-50 min-h-[44px]"
+                    className="flex-1 flex items-center justify-center gap-2 py-3 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow-md shadow-emerald-200 transition cursor-pointer disabled:opacity-50 min-h-11"
                   >
                     <CheckCircle2 size={16} />
                     <span>Verify Code & Reset Password</span>
