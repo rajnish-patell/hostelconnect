@@ -4,7 +4,7 @@ import {
   LoginDto,
   RegisterDto,
   ForgotPasswordDto,
-  VerifyResetTokenDto,
+  VerifyOtpDto,
   ResetPasswordDto,
 } from './auth.service';
 import { Public } from './public.decorator';
@@ -32,9 +32,9 @@ export class AuthController {
   }
 
   @Public()
-  @Post('verify-reset-token')
-  async verifyResetToken(@Body() dto: VerifyResetTokenDto) {
-    return this.authService.verifyResetToken(dto);
+  @Post('verify-otp')
+  async verifyOtp(@Body() dto: VerifyOtpDto) {
+    return this.authService.verifyOtp(dto);
   }
 
   @Public()

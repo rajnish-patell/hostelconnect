@@ -66,7 +66,7 @@ export const api = {
       }),
 
     forgotPassword: (email: string) =>
-      request<{ success: boolean; message: string; refId: string; expiresInMinutes: number; recipient: string }>(
+      request<{ success: boolean; message: string; recipient: string }>(
         '/auth/forgot-password',
         {
           method: 'POST',
@@ -74,17 +74,16 @@ export const api = {
         },
       ),
 
-
-    verifyResetToken: (token: string) =>
-      request<{ valid: boolean; email: string; expiresAt: string }>('/auth/verify-reset-token', {
+    verifyOtp: (email: string, otp: string) =>
+      request<{ success: boolean; message: string; resetToken: string }>('/auth/verify-otp', {
         method: 'POST',
-        body: JSON.stringify({ token }),
+        body: JSON.stringify({ email, otp }),
       }),
 
-    resetPassword: (token: string, newPassword: string) =>
+    resetPassword: (email: string, resetToken: string, newPassword: string) =>
       request<{ success: boolean; message: string }>('/auth/reset-password', {
         method: 'POST',
-        body: JSON.stringify({ token, newPassword }),
+        body: JSON.stringify({ email, resetToken, newPassword }),
       }),
 
     getProfile: () => request<any>('/auth/me'),

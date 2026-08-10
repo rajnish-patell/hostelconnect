@@ -18,7 +18,6 @@ import {
   RotateCcw,
   ShieldCheck,
   Check,
-  Copy,
   Clock,
   AlertTriangle,
   Loader2,
@@ -48,15 +47,17 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
   const [isLoading, setIsLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
 
-  // ─── Real OTP & Recovery State ───
+  // ─── Secure 4-Step Password Recovery State ───
   const [showForgotModal, setShowForgotModal] = useState(false);
   const [forgotRole, setForgotRole] = useState<'SCHOOL_ADMIN' | 'SUPER_ADMIN' | 'STUDENT' | 'PARENT'>('SUPER_ADMIN');
   const [forgotInput, setForgotInput] = useState('patelrajnish47@gmail.com');
-  const [forgotStep, setForgotStep] = useState<'request' | 'otp' | 'success'>('request');
+  const [maskedRecipient, setMaskedRecipient] = useState('');
+  const [forgotStep, setForgotStep] = useState<'request' | 'otp' | 'password' | 'success'>('request');
   const [isRecoveryLoading, setIsRecoveryLoading] = useState(false);
 
-  // Security Flags & Dynamic OTP Service
+  // Verification & Temporary Authorization Token
   const [otpDigits, setOtpDigits] = useState<string[]>(['', '', '', '', '', '']);
+  const [resetAuthToken, setResetAuthToken] = useState<string>('');
   const [otpCountdown, setOtpCountdown] = useState(60);
   const [canResend, setCanResend] = useState(false);
   const [failedAttempts, setFailedAttempts] = useState(0);
@@ -66,8 +67,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [showNewPassword, setShowNewPassword] = useState(false);
   const [recoveryError, setRecoveryError] = useState('');
-  const [dispatchToast, setDispatchToast] = useState<{ recipient: string; refId: string } | null>(null);
-
+  const [dispatchToast, setDispatchToast] = useState<{ recipient: string } | null>(null);
 
   const otpInputRefs = useRef<(HTMLInputElement | null)[]>([]);
 
@@ -137,11 +137,12 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
     setForgotRole(authRole);
     if (authRole === 'SUPER_ADMIN') setForgotInput('patelrajnish47@gmail.com');
     else if (authRole === 'SCHOOL_ADMIN') setForgotInput('admin@dps.edu.in');
-    else if (authRole === 'STUDENT') setForgotInput('STU-1001');
+    else if (authRole === 'STUDENT') setForgotInput('student@dps.edu.in');
     else setForgotInput('patelrajnish47@gmail.com');
 
     setForgotStep('request');
     setOtpDigits(['', '', '', '', '', '']);
+    setResetAuthToken('');
     setNewPassword('');
     setConfirmPassword('');
     setRecoveryError('');
@@ -149,7 +150,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
     setShowForgotModal(true);
   };
 
-  // Send Recovery Email via Backend API
+  // Step 1: Send Recovery Email via Backend API
   const handleSendRecovery = async (e: React.FormEvent) => {
     e.preventDefault();
     setRecoveryError('');
@@ -167,6 +168,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
     setIsRecoveryLoading(true);
     try {
       const res = await api.auth.forgotPassword(cleanEmail);
+      setMaskedRecipient(res.recipient || cleanEmail);
       setOtpCountdown(60);
       setCanResend(false);
       setOtpDigits(['', '', '', '', '', '']);
@@ -174,18 +176,16 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
 
       setDispatchToast({
         recipient: res.recipient || cleanEmail,
-        refId: res.refId || 'REF-' + Math.random().toString(36).substring(2, 7).toUpperCase(),
       });
 
       setTimeout(() => {
         otpInputRefs.current[0]?.focus();
       }, 200);
     } catch (err: any) {
-      setRecoveryError(err.message || 'Unable to send password reset code. Please try again.');
+      setRecoveryError(err.message || 'Unable to send verification code. Please try again.');
     } finally {
       setIsRecoveryLoading(false);
     }
-
   };
 
   // Handle 6-digit OTP Box Typing
@@ -216,6 +216,47 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
     }
   };
 
+  // Step 2: Verify OTP via Backend API
+  const handleVerifyOtp = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setRecoveryError('');
+
+    if (isLockedOut) {
+      setRecoveryError(`Too many failed attempts. Security lockout active for ${lockoutTimer}s.`);
+      return;
+    }
+
+    const enteredOtp = otpDigits.join('');
+    if (enteredOtp.length !== 6) {
+      setRecoveryError('Please enter all 6 digits of your security code from your email.');
+      return;
+    }
+
+    setIsRecoveryLoading(true);
+    try {
+      const res = await api.auth.verifyOtp(forgotInput.trim(), enteredOtp);
+      if (res.resetToken) {
+        setResetAuthToken(res.resetToken);
+        setForgotStep('password');
+      } else {
+        throw new Error('Invalid verification session.');
+      }
+    } catch (err: any) {
+      const attempts = failedAttempts + 1;
+      setFailedAttempts(attempts);
+
+      if (attempts >= 5) {
+        setIsLockedOut(true);
+        setLockoutTimer(60);
+        setRecoveryError('Security Alert: 5 invalid attempts detected. Security lockout active for 60 seconds.');
+      } else {
+        setRecoveryError(err.message || `Invalid verification code. ${5 - attempts} attempt(s) remaining.`);
+      }
+    } finally {
+      setIsRecoveryLoading(false);
+    }
+  };
+
   // Password Security Strength Calculation
   const calculatePasswordStrength = (pass: string) => {
     let score = 0;
@@ -229,49 +270,49 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
 
   const passwordStrength = calculatePasswordStrength(newPassword);
 
-  // Verify OTP and Reset Password via Backend API
-  const handleVerifyAndResetPassword = async (e: React.FormEvent) => {
+  // Step 3: Update Password via Backend API
+  const handleUpdatePassword = async (e: React.FormEvent) => {
     e.preventDefault();
     setRecoveryError('');
 
-    if (isLockedOut) {
-      setRecoveryError(`Too many failed attempts. Security lockout active for ${lockoutTimer}s.`);
+    if (newPassword.length < 8) {
+      setRecoveryError('Password must be at least 8 characters long.');
       return;
     }
 
-    const enteredOtp = otpDigits.join('');
-    if (enteredOtp.length !== 6) {
-      setRecoveryError('Please enter all 6 digits of your security code.');
+    if (!/[A-Z]/.test(newPassword)) {
+      setRecoveryError('Password must contain at least one uppercase letter (A-Z).');
       return;
     }
 
-    if (newPassword.length < 6) {
-      setRecoveryError('Password must be at least 6 characters long.');
+    if (!/[a-z]/.test(newPassword)) {
+      setRecoveryError('Password must contain at least one lowercase letter (a-z).');
+      return;
+    }
+
+    if (!/[0-9]/.test(newPassword)) {
+      setRecoveryError('Password must contain at least one number (0-9).');
+      return;
+    }
+
+    if (!/[^A-Za-z0-9]/.test(newPassword)) {
+      setRecoveryError('Password must contain at least one special character (e.g. !@#$%^&*).');
       return;
     }
 
     if (newPassword !== confirmPassword) {
-      setRecoveryError('Passwords do not match. Please recheck your entry.');
+      setRecoveryError('Passwords do not match. Please verify your entry.');
       return;
     }
 
     setIsRecoveryLoading(true);
     try {
-      await api.auth.verifyResetToken(enteredOtp);
-      await api.auth.resetPassword(enteredOtp, newPassword);
+      await api.auth.resetPassword(forgotInput.trim(), resetAuthToken, newPassword);
       setPasswordOrPin(newPassword);
+      setResetAuthToken('');
       setForgotStep('success');
     } catch (err: any) {
-      const attempts = failedAttempts + 1;
-      setFailedAttempts(attempts);
-
-      if (attempts >= 3) {
-        setIsLockedOut(true);
-        setLockoutTimer(60);
-        setRecoveryError('Security Alert: 3 invalid attempts detected. System locked for 60 seconds.');
-      } else {
-        setRecoveryError(err.message || `Invalid security code. ${3 - attempts} attempt(s) remaining.`);
-      }
+      setRecoveryError(err.message || 'Unable to update password. Please request a new code.');
     } finally {
       setIsRecoveryLoading(false);
     }
@@ -338,22 +379,21 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
           <div className="flex items-start justify-between gap-3 mb-2">
             <div className="flex items-center gap-2">
               <span className="h-2.5 w-2.5 rounded-full bg-emerald-400 animate-ping" />
-              <span className="text-xs font-mono font-bold text-emerald-400 uppercase">Email Dispatch Service</span>
+              <span className="text-xs font-mono font-bold text-emerald-400 uppercase">Email Security Gateway</span>
             </div>
             <button onClick={() => setDispatchToast(null)} className="text-slate-400 hover:text-white cursor-pointer">
               <X size={16} />
             </button>
           </div>
           <p className="text-xs text-slate-300 mb-2 leading-relaxed">
-            A secure 6-digit verification code has been dispatched to your email <span className="font-bold text-white">{dispatchToast.recipient}</span>.
+            Verification code dispatched to <span className="font-bold text-white">{dispatchToast.recipient}</span>.
           </p>
           <div className="flex items-center gap-2 text-[11px] text-cyan-300 bg-slate-800/80 px-3 py-2 rounded-xl border border-slate-700">
             <Mail size={14} className="shrink-0 text-cyan-400" />
-            <span>Please check your inbox or spam folder to retrieve the code.</span>
+            <span>Please check your email inbox to enter your 6-digit code.</span>
           </div>
         </div>
       )}
-
 
       <div className="relative w-full max-w-md my-4 sm:my-8">
         {/* Brand Header */}
@@ -492,7 +532,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
                 {isLoading ? (
                   <span className="flex items-center gap-2">
                     <Loader2 size={16} className="animate-spin" />
-                    <span>Verifying credentials with backend...</span>
+                    <span>Verifying credentials...</span>
                   </span>
                 ) : (
                   <>
@@ -537,7 +577,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
         </p>
       </div>
 
-      {/* ─── REAL OTP RECOVERY MODAL (SECURITY ENFORCED) ─── */}
+      {/* ─── SECURE PASSWORD RECOVERY MODAL (ZERO OTP EXPOSURE) ─── */}
       {showForgotModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-slate-900/60 backdrop-blur-md animate-fade-in-up">
           <div className="relative w-full max-w-lg bg-white rounded-3xl shadow-2xl border border-slate-200/90 p-5 sm:p-8 overflow-hidden max-h-[90vh] overflow-y-auto">
@@ -549,7 +589,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
                 </div>
                 <div>
                   <h3 className="text-base font-extrabold text-slate-900">Security Password Recovery</h3>
-                  <p className="text-xs text-slate-400">Target: <span className="font-bold text-slate-600">{forgotRole.replace('_', ' ')}</span></p>
+                  <p className="text-xs text-slate-400">Target Role: <span className="font-bold text-slate-600">{forgotRole.replace('_', ' ')}</span></p>
                 </div>
               </div>
               <button
@@ -572,15 +612,15 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
             {isLockedOut && (
               <div className="flex items-center gap-2 bg-amber-50 border border-amber-200 text-amber-800 text-xs rounded-xl p-3.5 mb-4 font-bold">
                 <Clock size={16} className="text-amber-600 shrink-0" />
-                <span>Security Lockout Active: Please wait {lockoutTimer} seconds.</span>
+                <span>Security Lockout Active: Please wait {lockoutTimer} seconds before retrying.</span>
               </div>
             )}
 
-            {/* ─── STEP 1: ENTER REGISTERED EMAIL ─── */}
+            {/* ─── STEP 1: REQUEST VERIFICATION CODE ─── */}
             {forgotStep === 'request' && (
               <form onSubmit={handleSendRecovery} className="space-y-4">
                 <p className="text-xs text-slate-600 leading-relaxed">
-                  Enter your registered account email. A secure 6-digit cryptographic verification code and reset link will be dispatched to your authorized email address.
+                  Enter your registered account email. A secure 6-digit cryptographic verification code will be dispatched strictly to your email inbox.
                 </p>
 
                 <div>
@@ -620,7 +660,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
                     ) : (
                       <>
                         <Send size={15} />
-                        <span>Dispatch Verification Code</span>
+                        <span>Send Verification Code</span>
                       </>
                     )}
                   </button>
@@ -628,31 +668,30 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
               </form>
             )}
 
-            {/* ─── STEP 2: VERIFY REAL 6-DIGIT OTP & SET NEW PASSWORD ─── */}
+            {/* ─── STEP 2: ENTER VERIFICATION CODE (FROM EMAIL ONLY) ─── */}
             {forgotStep === 'otp' && (
-              <form onSubmit={handleVerifyAndResetPassword} className="space-y-4">
+              <form onSubmit={handleVerifyOtp} className="space-y-4">
                 <div className="bg-slate-50 border border-slate-200/80 rounded-2xl p-4">
                   <div className="flex items-center justify-between mb-1">
-                    <span className="text-xs font-bold text-slate-700">Code Sent To:</span>
-                    <span className="text-xs font-mono font-bold text-indigo-600">{forgotInput}</span>
+                    <span className="text-xs font-bold text-slate-700">Verification Code Sent To:</span>
+                    <span className="text-xs font-mono font-bold text-indigo-600">{maskedRecipient || forgotInput}</span>
                   </div>
                   <div className="flex items-center justify-between text-[11px] text-slate-500">
-                    <span>Code valid for 15 minutes</span>
+                    <span>Code valid for 10 minutes</span>
                     <span className="font-mono font-bold text-slate-700">{otpCountdown}s countdown</span>
                   </div>
                 </div>
 
-                {/* Secure Email Instruction Banner */}
-                <div className="bg-indigo-50/90 border border-indigo-200/80 rounded-2xl p-4 space-y-2">
+                {/* Secure Email Instruction (No Code Displayed!) */}
+                <div className="bg-indigo-50/90 border border-indigo-200/80 rounded-2xl p-4 space-y-1.5">
                   <div className="flex items-center gap-2 text-indigo-950 font-bold text-xs">
                     <Mail size={16} className="text-indigo-600 shrink-0" />
-                    <span>Security Code Dispatched to Email</span>
+                    <span>Check Your Email Inbox</span>
                   </div>
                   <p className="text-xs text-indigo-800 leading-relaxed font-medium">
-                    A secure 6-digit verification code has been dispatched to <strong className="font-mono text-indigo-950">{forgotInput}</strong> (and SuperAdmin <strong className="font-mono text-indigo-950">patelrajnish47@gmail.com</strong>). Please check your email inbox to enter your code below.
+                    A 6-digit verification code has been dispatched to your email. Please check your inbox or spam folder and enter the 6 digits below.
                   </p>
                 </div>
-
 
                 {/* 6-Box OTP Input */}
                 <div>
@@ -691,6 +730,40 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
                   </div>
                 </div>
 
+                <div className="pt-2 flex flex-col sm:flex-row gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setForgotStep('request')}
+                    className="py-3 px-4 rounded-xl border border-slate-200 text-xs font-bold text-slate-600 hover:bg-slate-50 transition cursor-pointer text-center"
+                  >
+                    Back
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={isLockedOut || isRecoveryLoading}
+                    className="flex-1 flex items-center justify-center gap-2 py-3 px-4 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold shadow-md shadow-indigo-200 transition cursor-pointer disabled:opacity-50 min-h-11"
+                  >
+                    {isRecoveryLoading ? (
+                      <Loader2 size={16} className="animate-spin" />
+                    ) : (
+                      <>
+                        <CheckCircle2 size={16} />
+                        <span>Verify Security Code</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              </form>
+            )}
+
+            {/* ─── STEP 3: SET NEW PASSWORD (AUTHORIZED VIA SERVER RESET TOKEN) ─── */}
+            {forgotStep === 'password' && (
+              <form onSubmit={handleUpdatePassword} className="space-y-4">
+                <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3 flex items-center gap-2 text-emerald-800 text-xs font-bold">
+                  <ShieldCheck size={16} className="text-emerald-600 shrink-0" />
+                  <span>Verification Successful. Create your new secure password.</span>
+                </div>
+
                 {/* New Password Field */}
                 <div>
                   <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
@@ -704,7 +777,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
                       type={showNewPassword ? 'text' : 'password'}
                       value={newPassword}
                       onChange={(e) => setNewPassword(e.target.value)}
-                      placeholder="Enter new password"
+                      placeholder="Enter at least 8 characters"
                       required
                       className="w-full pl-11 pr-11 py-3 rounded-xl border border-slate-200 bg-slate-50/60 text-sm text-slate-900 focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all font-medium"
                     />
@@ -735,6 +808,9 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
                         />
                       ))}
                     </div>
+                    <p className="text-[11px] text-slate-400">
+                      Must contain uppercase, lowercase, numbers & special character.
+                    </p>
                   </div>
                 </div>
 
@@ -761,14 +837,14 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
                 <div className="pt-2 flex flex-col sm:flex-row gap-3">
                   <button
                     type="button"
-                    onClick={() => setForgotStep('request')}
+                    onClick={() => setForgotStep('otp')}
                     className="py-3 px-4 rounded-xl border border-slate-200 text-xs font-bold text-slate-600 hover:bg-slate-50 transition cursor-pointer text-center"
                   >
                     Back
                   </button>
                   <button
                     type="submit"
-                    disabled={isLockedOut || isRecoveryLoading}
+                    disabled={isRecoveryLoading}
                     className="flex-1 flex items-center justify-center gap-2 py-3 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow-md shadow-emerald-200 transition cursor-pointer disabled:opacity-50 min-h-11"
                   >
                     {isRecoveryLoading ? (
@@ -776,7 +852,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
                     ) : (
                       <>
                         <CheckCircle2 size={16} />
-                        <span>Verify Code & Reset Password</span>
+                        <span>Update Password & Save</span>
                       </>
                     )}
                   </button>
@@ -784,15 +860,15 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
               </form>
             )}
 
-            {/* ─── STEP 3: SUCCESS CONFIRMATION ─── */}
+            {/* ─── STEP 4: SUCCESS CONFIRMATION ─── */}
             {forgotStep === 'success' && (
               <div className="text-center py-5 space-y-4">
                 <div className="w-16 h-16 bg-emerald-50 text-emerald-600 rounded-2xl flex items-center justify-center mx-auto shadow-md shadow-emerald-100">
                   <CheckCircle2 size={36} />
                 </div>
-                <h4 className="text-lg font-extrabold text-slate-900">Credentials Updated Successfully</h4>
+                <h4 className="text-lg font-extrabold text-slate-900">Password Updated Successfully</h4>
                 <p className="text-xs sm:text-sm text-slate-600 leading-relaxed max-w-sm mx-auto">
-                  Your new password has been securely validated and updated in the backend database. You can now sign in immediately.
+                  Your new password has been securely hashed and updated in the backend database. You can now sign in immediately.
                 </p>
                 <button
                   type="button"
