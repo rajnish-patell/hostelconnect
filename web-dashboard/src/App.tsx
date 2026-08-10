@@ -187,12 +187,12 @@ export default function App() {
                   ← Return to Super Admin All Tenants Console
                 </button>
               </div>
-              <SchoolAdminDashboard onStartCall={handleStartCall} />
+              <SchoolAdminDashboard onStartCall={handleStartCall} tenant={selectedTenant} />
             </div>
           )
         ) : isSchoolAdmin ? (
           /* School Admin: Isolated to their own single tenant */
-          <SchoolAdminDashboard onStartCall={handleStartCall} />
+          <SchoolAdminDashboard onStartCall={handleStartCall} tenant={selectedTenant} />
         ) : (
           /* Student / Parent Portals */
           <div className="flex items-center justify-center min-h-[60vh]">

@@ -5,11 +5,14 @@ import {
   Link as LinkIcon, Copy, Check, TrendingUp, Clock, MoreVertical, LayoutDashboard, ChevronRight, Menu
 } from 'lucide-react';
 
+import { SchoolTenant } from './Header';
+
 interface SchoolAdminDashboardProps {
   onStartCall?: (config: { studentName: string; parentName: string; hostelBlock: string; roomId: string }) => void;
+  tenant?: SchoolTenant;
 }
 
-export const SchoolAdminDashboard: React.FC<SchoolAdminDashboardProps> = ({ onStartCall }) => {
+export const SchoolAdminDashboard: React.FC<SchoolAdminDashboardProps> = ({ onStartCall, tenant }) => {
   const [activeTab, setActiveTab] = useState<'overview' | 'students' | 'parents' | 'tablets' | 'rules' | 'finance'>('overview');
   const [searchQuery, setSearchQuery] = useState('');
   const [showAddStudentModal, setShowAddStudentModal] = useState(false);
@@ -174,8 +177,8 @@ export const SchoolAdminDashboard: React.FC<SchoolAdminDashboardProps> = ({ onSt
         {/* Tenant Footer Info */}
         <div className="hidden lg:block pt-5 border-t border-slate-100 mt-8">
           <div className="bg-slate-50 rounded-xl p-4 border border-slate-100">
-            <p className="text-xs font-bold text-slate-900">Delhi Public School</p>
-            <p className="text-[11px] text-slate-400 font-mono mt-0.5">Code: SCH-DAP</p>
+            <p className="text-xs font-bold text-slate-900">{tenant?.name || 'Delhi Public School (R.K. Puram)'}</p>
+            <p className="text-[11px] text-slate-400 font-mono mt-0.5">Code: {tenant?.code || 'SCH-DAP'}</p>
             <div className="mt-2.5 flex items-center gap-2 text-[10px] font-bold text-emerald-600">
               <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" /> Live Server Connected
             </div>
