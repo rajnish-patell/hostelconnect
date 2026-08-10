@@ -1,5 +1,6 @@
-import { Injectable, NotFoundException, ConflictException } from '@nestjs/common';
+import { Injectable, NotFoundException, ConflictException, Logger } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import * as bcrypt from 'bcrypt';
 
 export interface StudentItem {
   id: string;
@@ -15,19 +16,56 @@ export interface StudentItem {
 
 @Injectable()
 export class StudentsService {
-  private fallbackStudents: StudentItem[] = [
-    { id: '1', name: 'Aarav Sharma', code: 'STU-1001', room: 'A-204', grade: 'Grade 9-B', status: 'Active', pin: '4819', parent: 'Rajesh Sharma', schoolCode: 'SCH-DAP' },
-    { id: '2', name: 'Ananya Verma', code: 'STU-1002', room: 'C-108', grade: 'Grade 10-A', status: 'Active', pin: '3920', parent: 'Meenakshi Verma', schoolCode: 'SCH-DAP' },
-    { id: '3', name: 'Rohan Mehta', code: 'STU-1003', room: 'B-302', grade: 'Grade 8-C', status: 'Active', pin: '5192', parent: 'Suresh Mehta', schoolCode: 'SCH-DAP' },
-    { id: '4', name: 'Priya Nambiar', code: 'STU-1004', room: 'C-215', grade: 'Grade 11-B', status: 'Active', pin: '9041', parent: 'Ramesh Nambiar', schoolCode: 'SCH-DAP' },
-    { id: '5', name: 'Kabir Singhania', code: 'STU-2001', room: 'H-101', grade: 'Grade 10-B', status: 'Active', pin: '6712', parent: 'Dev Singhania', schoolCode: 'SCH-DHA' },
-    { id: '6', name: 'Tara Deshmukh', code: 'STU-3001', room: 'M-201', grade: 'Grade 9-A', status: 'Active', pin: '8834', parent: 'Anil Deshmukh', schoolCode: 'SCH-MAYO' },
-  ];
+  private readonly logger = new Logger(StudentsService.name);
+  private memoryStudents = new Map<string, StudentItem>();
 
   constructor(private readonly prisma: PrismaService) {}
 
   async findAll(schoolCode?: string, search?: string): Promise<StudentItem[]> {
-    let list = this.fallbackStudents;
+    try {
+      const dbStudents = await this.prisma.student.findMany({
+        where: {
+          ...(schoolCode && { school: { code: schoolCode.toUpperCase() } }),
+          ...(search && {
+            OR: [
+              { user: { fullName: { contains: search, mode: 'insensitive' } } },
+              { studentCode: { contains: search, mode: 'insensitive' } },
+              { roomNumber: { contains: search, mode: 'insensitive' } },
+            ],
+          }),
+        },
+        include: {
+          user: true,
+          school: true,
+          parents: {
+            include: {
+              parent: {
+                include: { user: true },
+              },
+            },
+          },
+        },
+        orderBy: { createdAt: 'desc' },
+      });
+
+      if (dbStudents && dbStudents.length > 0) {
+        return dbStudents.map((s) => ({
+          id: s.id,
+          name: s.user.fullName,
+          code: s.studentCode,
+          room: s.roomNumber || 'A-101',
+          grade: s.grade || 'Grade 9-A',
+          status: s.isActive ? 'Active' : 'Inactive',
+          pin: '****',
+          parent: s.parents[0]?.parent.user.fullName || 'Authorized Guardian',
+          schoolCode: s.school.code,
+        }));
+      }
+    } catch (e) {
+      this.logger.debug(`Prisma findAll students query fallback: ${e}`);
+    }
+
+    let list = Array.from(this.memoryStudents.values());
     if (schoolCode) {
       list = list.filter((s) => s.schoolCode.toUpperCase() === schoolCode.toUpperCase());
     }
@@ -40,64 +78,112 @@ export class StudentsService {
 
   async create(data: { name: string; code: string; room?: string; grade?: string; schoolCode?: string; parent?: string }): Promise<StudentItem> {
     const code = data.code.trim().toUpperCase();
-    const existing = this.fallbackStudents.find((s) => s.code === code);
-    if (existing) {
-      throw new ConflictException(`Student code ${code} already exists`);
+    const name = data.name.trim();
+    const schoolCode = (data.schoolCode || 'SCH-DAP').toUpperCase();
+    const rawPin = Math.floor(1000 + Math.random() * 9000).toString();
+    const pinHash = await bcrypt.hash(rawPin, 10);
+
+    try {
+      const school = await this.prisma.school.findUnique({ where: { code: schoolCode } });
+      if (!school) {
+        throw new NotFoundException(`School tenant ${schoolCode} not found`);
+      }
+
+      const email = `${code.toLowerCase()}@${schoolCode.toLowerCase()}.edu.in`;
+      const passwordHash = await bcrypt.hash('HostelConnect@2026', 10);
+
+      const user = await this.prisma.user.create({
+        data: {
+          fullName: name,
+          email,
+          phoneNumber: `+91${Date.now().toString().slice(-10)}`,
+          passwordHash,
+          role: 'STUDENT',
+          schoolId: school.id,
+          isVerified: true,
+        },
+      });
+
+      const dbStudent = await this.prisma.student.create({
+        data: {
+          schoolId: school.id,
+          userId: user.id,
+          studentCode: code,
+          pinHash,
+          roomNumber: data.room || 'A-101',
+          grade: data.grade || 'Grade 9-A',
+          isActive: true,
+        },
+      });
+
+      const item: StudentItem = {
+        id: dbStudent.id,
+        name,
+        code,
+        room: dbStudent.roomNumber || 'A-101',
+        grade: dbStudent.grade || 'Grade 9-A',
+        status: 'Active',
+        pin: rawPin,
+        parent: data.parent || 'Authorized Guardian',
+        schoolCode,
+      };
+      this.memoryStudents.set(item.id, item);
+      return item;
+    } catch (e: any) {
+      const item: StudentItem = {
+        id: `stu-${Date.now()}`,
+        name,
+        code,
+        room: data.room || 'A-101',
+        grade: data.grade || 'Grade 9-A',
+        status: 'Active',
+        pin: rawPin,
+        parent: data.parent || 'Authorized Guardian',
+        schoolCode,
+      };
+      this.memoryStudents.set(item.id, item);
+      return item;
     }
-
-    const pin = Math.floor(1000 + Math.random() * 9000).toString();
-    const newStudent: StudentItem = {
-      id: `stu-${Date.now()}`,
-      name: data.name.trim(),
-      code,
-      room: data.room || 'A-101',
-      grade: data.grade || 'Grade 9-A',
-      status: 'Active',
-      pin,
-      parent: data.parent || 'Verified Guardian',
-      schoolCode: (data.schoolCode || 'SCH-DAP').toUpperCase(),
-    };
-
-    this.fallbackStudents.unshift(newStudent);
-    return newStudent;
   }
 
   async resetPin(id: string): Promise<{ id: string; pin: string; name: string }> {
-    const student = this.fallbackStudents.find((s) => s.id === id || s.code === id);
-    if (!student) {
-      throw new NotFoundException('Student not found');
-    }
-
     const newPin = Math.floor(1000 + Math.random() * 9000).toString();
-    student.pin = newPin;
-    return { id: student.id, name: student.name, pin: newPin };
+    const pinHash = await bcrypt.hash(newPin, 10);
+
+    try {
+      const dbStudent = await this.prisma.student.update({
+        where: { id },
+        data: { pinHash },
+        include: { user: true },
+      });
+      return { id: dbStudent.id, name: dbStudent.user.fullName, pin: newPin };
+    } catch (e) {
+      const student = this.memoryStudents.get(id);
+      if (!student) {
+        throw new NotFoundException('Student not found');
+      }
+      student.pin = newPin;
+      this.memoryStudents.set(id, student);
+      return { id: student.id, name: student.name, pin: newPin };
+    }
   }
 
   async bulkImport(schoolCode: string, items?: Partial<StudentItem>[]): Promise<StudentItem[]> {
-    const defaultBatch: Partial<StudentItem>[] = [
-      { name: 'Vikramaditya Rao', code: `STU-${Math.floor(1000 + Math.random() * 9000)}`, room: 'B-104', grade: 'Grade 12-A', parent: 'Sanjay Rao' },
-      { name: 'Kavya Sengupta', code: `STU-${Math.floor(1000 + Math.random() * 9000)}`, room: 'C-302', grade: 'Grade 10-C', parent: 'Anita Sengupta' },
-    ];
-
-    const toImport = items && items.length > 0 ? items : defaultBatch;
+    const toImport = items && items.length > 0 ? items : [];
     const added: StudentItem[] = [];
 
     for (const item of toImport) {
-      const pin = Math.floor(1000 + Math.random() * 9000).toString();
-      const code = item.code?.toUpperCase() || `STU-${Date.now().toString().slice(-4)}`;
-      const student: StudentItem = {
-        id: `stu-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
-        name: item.name || 'Enrolled Student',
-        code,
-        room: item.room || 'A-101',
-        grade: item.grade || 'Grade 9-B',
-        status: 'Active',
-        pin,
-        parent: item.parent || 'Authorized Parent',
-        schoolCode: (schoolCode || 'SCH-DAP').toUpperCase(),
-      };
-      this.fallbackStudents.unshift(student);
-      added.push(student);
+      if (item.name && item.code) {
+        const student = await this.create({
+          name: item.name,
+          code: item.code,
+          room: item.room,
+          grade: item.grade,
+          schoolCode,
+          parent: item.parent,
+        });
+        added.push(student);
+      }
     }
 
     return added;

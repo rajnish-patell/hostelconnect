@@ -69,10 +69,14 @@ export interface TenantSchool {
 }
 
 const persistentSchools = new Map<string, TenantSchool>([
-  ['1', { id: '1', code: 'SCH-DAP', name: 'Delhi Public School (R.K. Puram)', students: 1240, tablets: 18, callsMonth: 14200, plan: 'ENTERPRISE', status: 'ACTIVE' }],
-  ['2', { id: '2', code: 'SCH-DHA', name: 'The Doon School (Dehradun)', students: 850, tablets: 14, callsMonth: 9800, plan: 'ENTERPRISE', status: 'ACTIVE' }],
-  ['3', { id: '3', code: 'SCH-MAYO', name: 'Mayo College (Ajmer)', students: 920, tablets: 16, callsMonth: 11500, plan: 'PRO', status: 'ACTIVE' }],
+  ['1', { id: '1', code: 'SCH-DAP', name: 'Delhi Public School (R.K. Puram)', students: 0, tablets: 0, callsMonth: 0, plan: 'PRO', status: 'ACTIVE' }],
 ]);
+
+const persistentStudents = new Map<string, any>();
+const persistentParents = new Map<string, any>();
+const persistentTablets = new Map<string, any>();
+const persistentCalls = new Map<string, any>();
+
 
 const userCredentialsStore = new Map<string, string>([
   ['patelrajnish47@gmail.com', 'HostelConnect@2026'],
@@ -344,34 +348,89 @@ async function handleClientFallback<T>(endpoint: string, options: RequestInit): 
     } as T;
   }
 
-  // 4. Default lists
-  if (endpoint.startsWith('/students')) {
-    return [
-      { id: '1', name: 'Aarav Sharma', code: 'STU-1001', room: 'A-204', grade: 'Grade 9-B', status: 'Active', pin: '4819', parent: 'Rajesh Sharma', schoolCode: 'SCH-DAP' },
-      { id: '2', name: 'Ananya Verma', code: 'STU-1002', room: 'C-108', grade: 'Grade 10-A', status: 'Active', pin: '3920', parent: 'Meenakshi Verma', schoolCode: 'SCH-DAP' },
-      { id: '3', name: 'Rohan Mehta', code: 'STU-1003', room: 'B-302', grade: 'Grade 8-C', status: 'Active', pin: '5192', parent: 'Suresh Mehta', schoolCode: 'SCH-DAP' },
-    ] as T;
+  // 4. Students
+  if (endpoint.startsWith('/students') && method === 'GET') {
+    return Array.from(persistentStudents.values()) as T;
   }
 
-  if (endpoint.startsWith('/parents')) {
-    return [
-      { id: 'p1', name: 'Rajesh Sharma', phone: '+91 98765 43210', student: 'Aarav Sharma (STU-1001)', relationship: 'Father', status: 'VERIFIED', schoolCode: 'SCH-DAP' },
-      { id: 'p2', name: 'Meenakshi Verma', phone: '+91 98123 45678', student: 'Ananya Verma (STU-1002)', relationship: 'Mother', status: 'VERIFIED', schoolCode: 'SCH-DAP' },
-    ] as T;
+  if (endpoint.startsWith('/students') && method === 'POST') {
+    const id = `stu-${Date.now()}`;
+    const newStudent = {
+      id,
+      name: body.name || 'New Student',
+      code: (body.code || `STU-${Date.now().toString().slice(-4)}`).toUpperCase(),
+      room: body.room || 'A-101',
+      grade: body.grade || 'Grade 9-A',
+      status: 'Active',
+      pin: Math.floor(1000 + Math.random() * 9000).toString(),
+      parent: body.parent || 'Verified Guardian',
+      schoolCode: (body.schoolCode || 'SCH-DAP').toUpperCase(),
+    };
+    persistentStudents.set(id, newStudent);
+
+    // Update student count on school
+    for (const s of persistentSchools.values()) {
+      if (s.code === newStudent.schoolCode) {
+        s.students = (s.students || 0) + 1;
+        persistentSchools.set(s.id, s);
+      }
+    }
+    return newStudent as T;
   }
 
-  if (endpoint.startsWith('/tablets')) {
-    return [
-      { id: 't1', deviceId: 'TAB-A01', name: 'Hostel A Entry Tablet', block: 'Block A', status: 'BUSY', isLocked: true, schoolCode: 'SCH-DAP' },
-      { id: 't2', deviceId: 'TAB-A02', name: 'Hostel A Common Room', block: 'Block A', status: 'ONLINE', isLocked: true, schoolCode: 'SCH-DAP' },
-    ] as T;
+  // 5. Parents
+  if (endpoint.startsWith('/parents') && method === 'GET') {
+    return Array.from(persistentParents.values()) as T;
   }
 
-  if (endpoint.startsWith('/calls/active')) {
-    return [
-      { id: 'call-9941', studentName: 'Aarav Sharma', parentName: 'Rajesh Sharma', hostelBlock: 'Block A (Boys)', tabletDevice: 'Tablet-A01', startTime: '18:42', duration: '04:05', schoolCode: 'SCH-DAP' },
-    ] as T;
+  if (endpoint.startsWith('/parents') && method === 'POST') {
+    const id = `p-${Date.now()}`;
+    const newParent = {
+      id,
+      name: body.name || 'Guardian',
+      phone: body.phone || '+919999999999',
+      student: body.student || 'Student',
+      relationship: body.relationship || 'Father',
+      status: 'VERIFIED',
+      schoolCode: (body.schoolCode || 'SCH-DAP').toUpperCase(),
+    };
+    persistentParents.set(id, newParent);
+    return newParent as T;
   }
+
+  // 6. Tablets
+  if (endpoint.startsWith('/tablets') && method === 'GET') {
+    return Array.from(persistentTablets.values()) as T;
+  }
+
+  if (endpoint.startsWith('/tablets') && method === 'POST') {
+    const id = `t-${Date.now()}`;
+    const newTablet = {
+      id,
+      deviceId: (body.deviceId || `TAB-${Date.now().toString().slice(-3)}`).toUpperCase(),
+      name: body.name || 'Hostel Kiosk',
+      block: body.block || 'Block A',
+      status: 'ONLINE',
+      isLocked: true,
+      schoolCode: (body.schoolCode || 'SCH-DAP').toUpperCase(),
+    };
+    persistentTablets.set(id, newTablet);
+
+    // Update tablet count on school
+    for (const s of persistentSchools.values()) {
+      if (s.code === newTablet.schoolCode) {
+        s.tablets = (s.tablets || 0) + 1;
+        persistentSchools.set(s.id, s);
+      }
+    }
+    return newTablet as T;
+  }
+
+  // 7. Calls
+  if (endpoint.startsWith('/calls/active') && method === 'GET') {
+    return Array.from(persistentCalls.values()) as T;
+  }
+
 
   return {} as T;
 }

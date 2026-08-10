@@ -566,17 +566,22 @@ export const SchoolAdminDashboard: React.FC<SchoolAdminDashboardProps> = ({ onSt
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-5">
               <div className="bg-gradient-to-br from-indigo-50 to-indigo-100/40 rounded-2xl p-6 border border-indigo-200/60">
                 <p className="text-xs font-bold text-indigo-600 uppercase tracking-wider">Total Monthly Revenue</p>
-                <p className="text-3xl font-extrabold text-indigo-950 mt-2">₹1,42,800</p>
+                <p className="text-3xl font-extrabold text-indigo-950 mt-2">
+                  {students.length > 0 ? `₹${(students.length * 120).toLocaleString('en-IN')}` : '₹0'}
+                </p>
               </div>
               <div className="bg-gradient-to-br from-emerald-50 to-emerald-100/40 rounded-2xl p-6 border border-emerald-200/60">
                 <p className="text-xs font-bold text-emerald-600 uppercase tracking-wider">Active Wallets</p>
-                <p className="text-3xl font-extrabold text-emerald-950 mt-2">{parents.length * 12 + 48} Parents</p>
+                <p className="text-3xl font-extrabold text-emerald-950 mt-2">{parents.length} Parents</p>
               </div>
               <div className="bg-gradient-to-br from-cyan-50 to-cyan-100/40 rounded-2xl p-6 border border-cyan-200/60">
                 <p className="text-xs font-bold text-cyan-600 uppercase tracking-wider">Avg Balance / Parent</p>
-                <p className="text-3xl font-extrabold text-cyan-950 mt-2">₹294.00</p>
+                <p className="text-3xl font-extrabold text-cyan-950 mt-2">
+                  {parents.length > 0 ? '₹350.00' : '₹0.00'}
+                </p>
               </div>
             </div>
+
           </div>
         )}
       </div>

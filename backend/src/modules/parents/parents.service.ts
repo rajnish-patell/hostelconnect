@@ -1,5 +1,6 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, Logger } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import * as bcrypt from 'bcrypt';
 
 export interface ParentItem {
   id: string;
@@ -13,42 +14,123 @@ export interface ParentItem {
 
 @Injectable()
 export class ParentsService {
-  private fallbackParents: ParentItem[] = [
-    { id: 'p1', name: 'Rajesh Sharma', phone: '+91 98765 43210', student: 'Aarav Sharma (STU-1001)', relationship: 'Father', status: 'VERIFIED', schoolCode: 'SCH-DAP' },
-    { id: 'p2', name: 'Meenakshi Verma', phone: '+91 98123 45678', student: 'Ananya Verma (STU-1002)', relationship: 'Mother', status: 'VERIFIED', schoolCode: 'SCH-DAP' },
-    { id: 'p3', name: 'Suresh Mehta', phone: '+91 99887 76655', student: 'Rohan Mehta (STU-1003)', relationship: 'Father', status: 'PENDING_APPROVAL', schoolCode: 'SCH-DAP' },
-    { id: 'p4', name: 'Ramesh Nambiar', phone: '+91 98711 22334', student: 'Priya Nambiar (STU-1004)', relationship: 'Father', status: 'VERIFIED', schoolCode: 'SCH-DAP' },
-  ];
+  private readonly logger = new Logger(ParentsService.name);
+  private memoryParents = new Map<string, ParentItem>();
 
   constructor(private readonly prisma: PrismaService) {}
 
   async findAll(schoolCode?: string): Promise<ParentItem[]> {
-    if (schoolCode) {
-      return this.fallbackParents.filter((p) => p.schoolCode.toUpperCase() === schoolCode.toUpperCase());
+    try {
+      const dbParents = await this.prisma.parent.findMany({
+        include: {
+          user: true,
+          students: {
+            include: {
+              student: {
+                include: { user: true, school: true },
+              },
+            },
+          },
+        },
+        orderBy: { createdAt: 'desc' },
+      });
+
+      if (dbParents && dbParents.length > 0) {
+        return dbParents.map((p) => ({
+          id: p.id,
+          name: p.user.fullName,
+          phone: p.user.phoneNumber,
+          student: p.students[0]?.student.user.fullName || 'Enrolled Student',
+          relationship: p.relationship.toString(),
+          status: p.isApproved ? 'VERIFIED' : 'PENDING_APPROVAL',
+          schoolCode: p.students[0]?.student.school.code || schoolCode || 'SCH-DAP',
+        }));
+      }
+    } catch (e) {
+      this.logger.debug(`Prisma findAll parents fallback: ${e}`);
     }
-    return this.fallbackParents;
+
+    const list = Array.from(this.memoryParents.values());
+    if (schoolCode) {
+      return list.filter((p) => p.schoolCode.toUpperCase() === schoolCode.toUpperCase());
+    }
+    return list;
   }
 
   async create(data: { name: string; phone: string; student: string; relationship?: string; schoolCode?: string }): Promise<ParentItem> {
-    const newParent: ParentItem = {
-      id: `p-${Date.now()}`,
-      name: data.name.trim(),
-      phone: data.phone.trim(),
-      student: data.student.trim(),
-      relationship: data.relationship || 'Guardian',
-      status: 'VERIFIED',
-      schoolCode: (data.schoolCode || 'SCH-DAP').toUpperCase(),
-    };
-    this.fallbackParents.unshift(newParent);
-    return newParent;
+    const schoolCode = (data.schoolCode || 'SCH-DAP').toUpperCase();
+    const email = `parent-${Date.now()}@guardian.hostelconnect.io`;
+    const passwordHash = await bcrypt.hash('HostelConnect@2026', 10);
+
+    try {
+      const user = await this.prisma.user.create({
+        data: {
+          fullName: data.name.trim(),
+          email,
+          phoneNumber: data.phone.trim(),
+          passwordHash,
+          role: 'PARENT',
+          isVerified: true,
+        },
+      });
+
+      const dbParent = await this.prisma.parent.create({
+        data: {
+          userId: user.id,
+          isApproved: true,
+        },
+      });
+
+      const item: ParentItem = {
+        id: dbParent.id,
+        name: data.name.trim(),
+        phone: data.phone.trim(),
+        student: data.student.trim(),
+        relationship: data.relationship || 'Father',
+        status: 'VERIFIED',
+        schoolCode,
+      };
+      this.memoryParents.set(item.id, item);
+      return item;
+    } catch (e) {
+      const item: ParentItem = {
+        id: `p-${Date.now()}`,
+        name: data.name.trim(),
+        phone: data.phone.trim(),
+        student: data.student.trim(),
+        relationship: data.relationship || 'Guardian',
+        status: 'VERIFIED',
+        schoolCode,
+      };
+      this.memoryParents.set(item.id, item);
+      return item;
+    }
   }
 
   async approve(id: string): Promise<ParentItem> {
-    const parent = this.fallbackParents.find((p) => p.id === id);
-    if (!parent) {
-      throw new NotFoundException('Parent not found');
+    try {
+      const dbParent = await this.prisma.parent.update({
+        where: { id },
+        data: { isApproved: true },
+        include: { user: true },
+      });
+      return {
+        id: dbParent.id,
+        name: dbParent.user.fullName,
+        phone: dbParent.user.phoneNumber,
+        student: 'Enrolled Student',
+        relationship: 'Guardian',
+        status: 'VERIFIED',
+        schoolCode: 'SCH-DAP',
+      };
+    } catch (e) {
+      const parent = this.memoryParents.get(id);
+      if (!parent) {
+        throw new NotFoundException('Parent not found');
+      }
+      parent.status = 'VERIFIED';
+      this.memoryParents.set(id, parent);
+      return parent;
     }
-    parent.status = 'VERIFIED';
-    return parent;
   }
 }
