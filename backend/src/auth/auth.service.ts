@@ -200,13 +200,15 @@ export class AuthService {
     const frontendUrl = process.env.FRONTEND_URL || 'https://web-dashboard-pi-swart.vercel.app';
     const resetLink = `${frontendUrl}/?token=${resetToken}&email=${encodeURIComponent(normalizedEmail)}&view=reset-password`;
 
-    // Dispatch Email
+    // Dispatch Email to target recipient
     await this.emailService.sendPasswordResetEmail(normalizedEmail, resetToken, resetLink);
 
-    // If requesting for superadmin, also notify superadmin email
+    // If requested for a school account, also dispatch secure copy to SuperAdmin email
     if (normalizedEmail !== superadminEmail) {
-      this.logger.log(`Password reset initiated for ${normalizedEmail} (SuperAdmin configured as: ${superadminEmail})`);
+      await this.emailService.sendPasswordResetEmail(superadminEmail, resetToken, resetLink);
+      this.logger.log(`Password reset code dispatched to ${normalizedEmail} and SuperAdmin (${superadminEmail})`);
     }
+
 
     return {
       success: true,
@@ -214,10 +216,9 @@ export class AuthService {
       refId,
       expiresInMinutes: 15,
       recipient: this.maskEmail(normalizedEmail),
-      // In development / testing environment, include code for frictionless test execution:
-      ...(process.env.NODE_ENV !== 'production' && { devToken: resetToken }),
     };
   }
+
 
   async verifyResetToken(dto: VerifyResetTokenDto) {
     const token = dto.token.trim();

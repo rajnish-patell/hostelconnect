@@ -66,13 +66,14 @@ export const api = {
       }),
 
     forgotPassword: (email: string) =>
-      request<{ success: boolean; message: string; refId: string; expiresInMinutes: number; recipient: string; devToken?: string }>(
+      request<{ success: boolean; message: string; refId: string; expiresInMinutes: number; recipient: string }>(
         '/auth/forgot-password',
         {
           method: 'POST',
           body: JSON.stringify({ email }),
         },
       ),
+
 
     verifyResetToken: (token: string) =>
       request<{ valid: boolean; email: string; expiresAt: string }>('/auth/verify-reset-token', {

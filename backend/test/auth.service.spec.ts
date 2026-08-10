@@ -73,8 +73,13 @@ describe('AuthService', () => {
   });
 
   it('verifies valid reset token and completes password reset', async () => {
-    const forgotRes = await service.forgotPassword({ email: 'user@example.com' });
-    const token = (forgotRes as any).devToken;
+    await service.forgotPassword({ email: 'user@example.com' });
+    expect(emailService.sendPasswordResetEmail).toHaveBeenCalled();
+
+    // Extract the reset token passed to the email service
+    const emailCallArgs = (emailService.sendPasswordResetEmail as jest.Mock).mock.calls[0];
+    const token = emailCallArgs[1]; // 2nd parameter is resetToken
+    expect(token).toBeDefined();
 
     const verifyRes = await service.verifyResetToken({ token });
     expect(verifyRes.valid).toBe(true);
@@ -86,4 +91,5 @@ describe('AuthService', () => {
     // Reusing the same token should fail
     await expect(service.resetPassword({ token, newPassword: 'AnotherPassword' })).rejects.toThrow();
   });
+
 });

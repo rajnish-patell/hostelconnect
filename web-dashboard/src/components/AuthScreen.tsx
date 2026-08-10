@@ -56,7 +56,6 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
   const [isRecoveryLoading, setIsRecoveryLoading] = useState(false);
 
   // Security Flags & Dynamic OTP Service
-  const [receivedDevOtp, setReceivedDevOtp] = useState<string | null>(null);
   const [otpDigits, setOtpDigits] = useState<string[]>(['', '', '', '', '', '']);
   const [otpCountdown, setOtpCountdown] = useState(60);
   const [canResend, setCanResend] = useState(false);
@@ -67,8 +66,8 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [showNewPassword, setShowNewPassword] = useState(false);
   const [recoveryError, setRecoveryError] = useState('');
-  const [dispatchToast, setDispatchToast] = useState<{ code?: string; recipient: string; refId: string } | null>(null);
-  const [copiedOtp, setCopiedOtp] = useState(false);
+  const [dispatchToast, setDispatchToast] = useState<{ recipient: string; refId: string } | null>(null);
+
 
   const otpInputRefs = useRef<(HTMLInputElement | null)[]>([]);
 
@@ -168,16 +167,14 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
     setIsRecoveryLoading(true);
     try {
       const res = await api.auth.forgotPassword(cleanEmail);
-      setReceivedDevOtp(res.devToken || null);
       setOtpCountdown(60);
       setCanResend(false);
       setOtpDigits(['', '', '', '', '', '']);
       setForgotStep('otp');
 
       setDispatchToast({
-        code: res.devToken,
         recipient: res.recipient || cleanEmail,
-        refId: res.refId || 'SEC-' + Math.random().toString(36).substring(2, 7).toUpperCase(),
+        refId: res.refId || 'REF-' + Math.random().toString(36).substring(2, 7).toUpperCase(),
       });
 
       setTimeout(() => {
@@ -188,6 +185,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
     } finally {
       setIsRecoveryLoading(false);
     }
+
   };
 
   // Handle 6-digit OTP Box Typing
@@ -334,44 +332,28 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
         <div className="absolute -bottom-40 -left-40 w-72 sm:w-96 h-72 sm:h-96 bg-cyan-200/30 rounded-full blur-3xl" />
       </div>
 
-      {/* ─── REALTIME OTP DISPATCH TOAST ─── */}
+      {/* ─── REALTIME OTP CONFIRMATION TOAST ─── */}
       {dispatchToast && (
         <div className="fixed top-4 right-4 sm:top-6 sm:right-6 z-50 max-w-sm sm:max-w-md w-full bg-slate-900 text-white rounded-2xl p-4 sm:p-5 shadow-2xl border border-indigo-500/40 animate-fade-in-up">
           <div className="flex items-start justify-between gap-3 mb-2">
             <div className="flex items-center gap-2">
               <span className="h-2.5 w-2.5 rounded-full bg-emerald-400 animate-ping" />
-              <span className="text-xs font-mono font-bold text-emerald-400 uppercase">Live Security Gateway</span>
+              <span className="text-xs font-mono font-bold text-emerald-400 uppercase">Email Dispatch Service</span>
             </div>
             <button onClick={() => setDispatchToast(null)} className="text-slate-400 hover:text-white cursor-pointer">
               <X size={16} />
             </button>
           </div>
-          <p className="text-xs text-slate-300 mb-3 leading-relaxed">
-            Encrypted OTP dispatched to <span className="font-bold text-white">{dispatchToast.recipient}</span>. Ref: <span className="font-mono text-cyan-400">{dispatchToast.refId}</span>.
+          <p className="text-xs text-slate-300 mb-2 leading-relaxed">
+            A secure 6-digit verification code has been dispatched to your email <span className="font-bold text-white">{dispatchToast.recipient}</span>.
           </p>
-          {dispatchToast.code && (
-            <div className="flex items-center justify-between bg-slate-800/90 border border-slate-700/80 rounded-xl px-3.5 py-2.5">
-              <div>
-                <span className="text-[10px] text-slate-400 block uppercase font-bold">Verification Code:</span>
-                <span className="text-lg font-mono font-black text-emerald-300 tracking-wider">{dispatchToast.code}</span>
-              </div>
-              <button
-                onClick={() => {
-                  if (dispatchToast.code) {
-                    navigator.clipboard.writeText(dispatchToast.code);
-                    setCopiedOtp(true);
-                    setTimeout(() => setCopiedOtp(false), 2000);
-                  }
-                }}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold transition cursor-pointer"
-              >
-                {copiedOtp ? <Check size={14} className="text-emerald-400" /> : <Copy size={14} />}
-                <span>{copiedOtp ? 'Copied' : 'Copy OTP'}</span>
-              </button>
-            </div>
-          )}
+          <div className="flex items-center gap-2 text-[11px] text-cyan-300 bg-slate-800/80 px-3 py-2 rounded-xl border border-slate-700">
+            <Mail size={14} className="shrink-0 text-cyan-400" />
+            <span>Please check your inbox or spam folder to retrieve the code.</span>
+          </div>
         </div>
       )}
+
 
       <div className="relative w-full max-w-md my-4 sm:my-8">
         {/* Brand Header */}
@@ -660,28 +642,17 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
                   </div>
                 </div>
 
-                {/* Direct Token Auto-Fill Helper if received from backend */}
-                {receivedDevOtp && (
-                  <div className="bg-indigo-50/90 border border-indigo-200 rounded-xl p-3 flex items-center justify-between text-xs">
-                    <div className="flex items-center gap-2">
-                      <span className="w-2 h-2 rounded-full bg-indigo-600 animate-pulse" />
-                      <span className="text-indigo-900 font-medium">Verification Code:</span>
-                      <span className="font-mono font-extrabold text-indigo-700 bg-white px-2.5 py-0.5 rounded border border-indigo-300 text-sm tracking-wider">{receivedDevOtp}</span>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        if (receivedDevOtp) {
-                          setOtpDigits(receivedDevOtp.split(''));
-                          otpInputRefs.current[5]?.focus();
-                        }
-                      }}
-                      className="text-[11px] font-bold text-indigo-700 hover:text-indigo-900 bg-white px-2.5 py-1 rounded-lg border border-indigo-300 hover:bg-indigo-50 transition cursor-pointer shadow-xs"
-                    >
-                      Auto-Fill ⚡
-                    </button>
+                {/* Secure Email Instruction Banner */}
+                <div className="bg-indigo-50/90 border border-indigo-200/80 rounded-2xl p-4 space-y-2">
+                  <div className="flex items-center gap-2 text-indigo-950 font-bold text-xs">
+                    <Mail size={16} className="text-indigo-600 shrink-0" />
+                    <span>Security Code Dispatched to Email</span>
                   </div>
-                )}
+                  <p className="text-xs text-indigo-800 leading-relaxed font-medium">
+                    A secure 6-digit verification code has been dispatched to <strong className="font-mono text-indigo-950">{forgotInput}</strong> (and SuperAdmin <strong className="font-mono text-indigo-950">patelrajnish47@gmail.com</strong>). Please check your email inbox to enter your code below.
+                  </p>
+                </div>
+
 
                 {/* 6-Box OTP Input */}
                 <div>
