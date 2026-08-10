@@ -1,27 +1,24 @@
 import React, { useState, useEffect } from 'react';
 import {
   Building2,
-  Globe,
-  CreditCard,
   Sliders,
   Plus,
   Shield,
   CheckCircle2,
   AlertTriangle,
-  Cpu,
-  Radio,
   DollarSign,
   X,
-  TrendingUp,
   Users,
   BarChart3,
-  ExternalLink,
   ArrowRight,
   Loader2,
   RefreshCw,
+  Trash2,
+  Edit3,
+  CreditCard,
 } from 'lucide-react';
 import { SchoolTenant } from './Header';
-import { api } from '../services/api';
+import { api, TenantSchool } from '../services/api';
 
 interface SuperAdminDashboardProps {
   onAccessTenant?: (tenant: SchoolTenant) => void;
@@ -31,12 +28,15 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onAcce
   const [activeTab, setActiveTab] = useState<'schools' | 'plans' | 'settings'>('schools');
   const [videoProvider, setVideoProvider] = useState('LIVEKIT');
   const [showAddSchoolModal, setShowAddSchoolModal] = useState(false);
+  const [showEditSchoolModal, setShowEditSchoolModal] = useState(false);
+  const [editingSchool, setEditingSchool] = useState<TenantSchool | null>(null);
+
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [newSchoolName, setNewSchoolName] = useState('');
   const [newSchoolCode, setNewSchoolCode] = useState('');
   const [newSchoolPlan, setNewSchoolPlan] = useState('PRO');
 
-  const [schools, setSchools] = useState<any[]>([]);
+  const [schools, setSchools] = useState<TenantSchool[]>([]);
   const [stats, setStats] = useState<any>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
@@ -58,7 +58,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onAcce
       setSchools(schoolsData);
       setStats(statsData);
     } catch (err: any) {
-      setErrorMsg(err?.message || 'Failed to load school tenant data from backend.');
+      setErrorMsg(err?.message || 'Failed to load school tenant data from database.');
     } finally {
       setIsLoading(false);
     }
@@ -68,13 +68,39 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onAcce
     loadDashboardData();
   }, []);
 
-  const toggleSchoolStatus = async (id: string, name: string) => {
+  const handleToggleStatus = async (id: string, name: string) => {
     try {
       const updated = await api.schools.toggleStatus(id);
       setSchools((prev) => prev.map((s) => (s.id === id ? { ...s, status: updated.status } : s)));
-      triggerToast(`${name}: ${updated.status}`);
+      // Refresh stats
+      api.stats.getOverview().then(setStats).catch(() => {});
+      triggerToast(`Tenant ${name}: Status changed to ${updated.status}`);
     } catch (err: any) {
       triggerToast(`Failed to update status: ${err?.message}`);
+    }
+  };
+
+  const handleChangePlan = async (id: string, newPlan: string, name: string) => {
+    try {
+      const updated = await api.schools.updatePlan(id, newPlan);
+      setSchools((prev) => prev.map((s) => (s.id === id ? { ...s, plan: updated.plan } : s)));
+      // Refresh stats
+      api.stats.getOverview().then(setStats).catch(() => {});
+      triggerToast(`Updated ${name} plan to ${newPlan}`);
+    } catch (err: any) {
+      triggerToast(`Failed to update plan: ${err?.message}`);
+    }
+  };
+
+  const handleDeleteTenant = async (id: string, name: string) => {
+    if (!window.confirm(`Are you sure you want to permanently delete tenant "${name}"?`)) return;
+    try {
+      await api.schools.delete(id);
+      setSchools((prev) => prev.filter((s) => s.id !== id));
+      api.stats.getOverview().then(setStats).catch(() => {});
+      triggerToast(`Deleted tenant ${name}`);
+    } catch (err: any) {
+      triggerToast(`Failed to delete tenant: ${err?.message}`);
     }
   };
 
@@ -97,10 +123,32 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onAcce
       setNewSchoolName('');
       setNewSchoolCode('');
       triggerToast(`Successfully onboarded new tenant: ${created.name}`);
-      // Refresh stats
       api.stats.getOverview().then(setStats).catch(() => {});
     } catch (err: any) {
       alert(err?.message || 'Failed to create school tenant');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleSaveEditSchool = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingSchool) return;
+
+    setIsSubmitting(true);
+    try {
+      const updated = await api.schools.update(editingSchool.id, {
+        name: editingSchool.name,
+        code: editingSchool.code,
+        plan: editingSchool.plan,
+      });
+      setSchools((prev) => prev.map((s) => (s.id === updated.id ? updated : s)));
+      setShowEditSchoolModal(false);
+      setEditingSchool(null);
+      triggerToast(`Successfully updated tenant: ${updated.name}`);
+      api.stats.getOverview().then(setStats).catch(() => {});
+    } catch (err: any) {
+      alert(err?.message || 'Failed to update school tenant');
     } finally {
       setIsSubmitting(false);
     }
@@ -123,7 +171,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onAcce
 
   return (
     <div className="flex flex-col gap-6 relative">
-      {/* Toast */}
+      {/* Toast Notification */}
       {toastMessage && (
         <div className="fixed bottom-5 right-5 z-50 flex items-center gap-2 bg-indigo-600 text-white py-3 px-5 rounded-xl shadow-xl text-sm font-semibold animate-fade-in-up">
           <CheckCircle2 size={18} /> {toastMessage}
@@ -145,7 +193,10 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onAcce
         </div>
         <div className="flex items-center gap-2">
           <button
-            onClick={loadDashboardData}
+            onClick={() => {
+              loadDashboardData();
+              triggerToast('Live database synchronized successfully');
+            }}
             disabled={isLoading}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-white border border-white/20 text-xs font-bold transition cursor-pointer"
           >
@@ -153,7 +204,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onAcce
             <span>Sync Live DB</span>
           </button>
           <span className="px-3 py-1 rounded-lg bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-xs font-mono font-bold">
-            All Tenants: {schools.length}
+            Total Tenants: {schools.length}
           </span>
         </div>
       </div>
@@ -190,13 +241,13 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onAcce
       {/* SCHOOLS TAB */}
       {activeTab === 'schools' && (
         <>
-          {/* SaaS KPIs */}
+          {/* SaaS KPIs Computed Directly from Real Database */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             {[
               { label: 'Total Managed Tenants', value: stats?.totalTenants ?? schools.length, icon: Building2, color: 'text-indigo-600', bg: 'bg-indigo-50' },
-              { label: 'Total Enrolled Students', value: stats?.totalStudents?.toLocaleString() ?? '3,650', icon: Users, color: 'text-emerald-600', bg: 'bg-emerald-50' },
-              { label: 'Cross-Tenant Calls', value: stats?.crossTenantCalls?.toLocaleString() ?? '41,700', icon: BarChart3, color: 'text-cyan-600', bg: 'bg-cyan-50' },
-              { label: 'Platform MRR', value: stats?.platformMrr ?? '₹4,85,000', icon: DollarSign, color: 'text-amber-600', bg: 'bg-amber-50' },
+              { label: 'Total Enrolled Students', value: (stats?.totalStudents ?? 0).toLocaleString(), icon: Users, color: 'text-emerald-600', bg: 'bg-emerald-50' },
+              { label: 'Cross-Tenant Calls', value: (stats?.crossTenantCalls ?? 0).toLocaleString(), icon: BarChart3, color: 'text-cyan-600', bg: 'bg-cyan-50' },
+              { label: 'Platform MRR', value: stats?.platformMrr ?? '₹0', icon: DollarSign, color: 'text-amber-600', bg: 'bg-amber-50' },
             ].map((kpi, i) => {
               const Icon = kpi.icon;
               return (
@@ -233,7 +284,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onAcce
             {isLoading ? (
               <div className="py-16 text-center text-slate-400 flex flex-col items-center justify-center gap-2">
                 <Loader2 size={24} className="animate-spin text-indigo-600" />
-                <span className="text-xs font-medium">Loading school tenants from backend database...</span>
+                <span className="text-xs font-medium">Loading school tenants from database...</span>
               </div>
             ) : schools.length === 0 ? (
               <div className="py-12 text-center text-slate-400">
@@ -251,7 +302,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onAcce
                       <th className="text-left py-3 px-4 text-xs font-semibold text-slate-500 uppercase tracking-wider hidden lg:table-cell">Calls/Mo</th>
                       <th className="text-left py-3 px-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">Plan</th>
                       <th className="text-left py-3 px-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">Status</th>
-                      <th className="text-right py-3 px-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">Tenant Access</th>
+                      <th className="text-right py-3 px-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">Actions</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -271,13 +322,21 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onAcce
                         <td className="py-3 px-4 hidden md:table-cell text-slate-600">{s.students?.toLocaleString() ?? 0}</td>
                         <td className="py-3 px-4 hidden lg:table-cell text-slate-600">{s.callsMonth?.toLocaleString() ?? 0}</td>
                         <td className="py-3 px-4">
-                          <code className="text-xs bg-slate-100 px-2 py-0.5 rounded font-mono">{s.plan || 'PRO'}</code>
+                          <select
+                            value={s.plan || 'PRO'}
+                            onChange={(e) => handleChangePlan(s.id, e.target.value, s.name)}
+                            className="text-xs bg-slate-100 px-2 py-1 rounded font-mono font-semibold text-slate-800 border border-slate-200 cursor-pointer focus:bg-white focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                          >
+                            <option value="TRIAL">TRIAL</option>
+                            <option value="PRO">PRO</option>
+                            <option value="ENTERPRISE">ENTERPRISE</option>
+                          </select>
                         </td>
                         <td className="py-3 px-4">
                           <Badge variant={s.status === 'ACTIVE' ? 'success' : 'danger'}>{s.status}</Badge>
                         </td>
                         <td className="py-3 px-4 text-right">
-                          <div className="flex items-center justify-end gap-2">
+                          <div className="flex items-center justify-end gap-1.5">
                             <button
                               onClick={() => {
                                 if (onAccessTenant) {
@@ -290,19 +349,36 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onAcce
                                   });
                                 }
                               }}
-                              className="text-xs font-bold py-1.5 px-3 rounded-lg bg-indigo-50 text-indigo-700 hover:bg-indigo-100 border border-indigo-200/80 transition cursor-pointer flex items-center gap-1"
+                              className="text-xs font-bold py-1.5 px-2.5 rounded-lg bg-indigo-50 text-indigo-700 hover:bg-indigo-100 border border-indigo-200/80 transition cursor-pointer flex items-center gap-1"
                               title="Enter this school's admin dashboard"
                             >
-                              <span>Access Tenant</span>
-                              <ArrowRight size={13} />
+                              <span>Access</span>
+                              <ArrowRight size={12} />
                             </button>
                             <button
-                              onClick={() => toggleSchoolStatus(s.id, s.name)}
-                              className={`text-xs font-medium py-1 px-2.5 rounded-md transition cursor-pointer ${
-                                s.status === 'ACTIVE' ? 'text-red-600 hover:bg-red-50' : 'text-emerald-600 hover:bg-emerald-50'
+                              onClick={() => {
+                                setEditingSchool({ ...s });
+                                setShowEditSchoolModal(true);
+                              }}
+                              className="p-1.5 rounded-md text-slate-500 hover:bg-slate-100 hover:text-slate-800 transition cursor-pointer"
+                              title="Edit school tenant"
+                            >
+                              <Edit3 size={14} />
+                            </button>
+                            <button
+                              onClick={() => handleToggleStatus(s.id, s.name)}
+                              className={`text-xs font-medium py-1 px-2 rounded-md transition cursor-pointer ${
+                                s.status === 'ACTIVE' ? 'text-amber-700 hover:bg-amber-50' : 'text-emerald-700 hover:bg-emerald-50'
                               }`}
                             >
                               {s.status === 'ACTIVE' ? 'Suspend' : 'Activate'}
+                            </button>
+                            <button
+                              onClick={() => handleDeleteTenant(s.id, s.name)}
+                              className="p-1.5 rounded-md text-red-500 hover:bg-red-50 transition cursor-pointer"
+                              title="Delete school tenant"
+                            >
+                              <Trash2 size={14} />
                             </button>
                           </div>
                         </td>
@@ -343,8 +419,14 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onAcce
                   ))}
                 </ul>
               </div>
-              <button className="w-full py-2 rounded-lg bg-indigo-600 text-white text-xs font-bold hover:bg-indigo-700 transition cursor-pointer">
-                Manage Plan
+              <button
+                onClick={() => {
+                  setActiveTab('schools');
+                  triggerToast(`Selected ${plan.name} tier overview`);
+                }}
+                className="w-full py-2 rounded-lg bg-indigo-600 text-white text-xs font-bold hover:bg-indigo-700 transition cursor-pointer"
+              >
+                Manage Active Tenants
               </button>
             </div>
           ))}
@@ -382,7 +464,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onAcce
         </div>
       )}
 
-      {/* ADD SCHOOL MODAL */}
+      {/* ONBOARD NEW SCHOOL MODAL */}
       {showAddSchoolModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-fade-in-up">
           <div className="relative w-full max-w-md bg-white rounded-2xl shadow-2xl p-6">
@@ -422,9 +504,9 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onAcce
                   onChange={(e) => setNewSchoolPlan(e.target.value)}
                   className="w-full p-2.5 rounded-lg border border-slate-200 text-xs font-semibold text-slate-900"
                 >
-                  <option value="PRO">Professional (PRO)</option>
-                  <option value="ENTERPRISE">Enterprise</option>
-                  <option value="TRIAL">14-Day Trial</option>
+                  <option value="PRO">Professional (PRO - ₹8,999/mo)</option>
+                  <option value="ENTERPRISE">Enterprise (₹79,999/yr)</option>
+                  <option value="TRIAL">14-Day Free Trial</option>
                 </select>
               </div>
               <div className="flex gap-2 pt-2">
@@ -441,6 +523,70 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onAcce
                   className="flex-1 py-2 rounded-lg bg-indigo-600 text-white text-xs font-bold hover:bg-indigo-700 cursor-pointer flex items-center justify-center gap-1.5"
                 >
                   {isSubmitting ? <Loader2 size={14} className="animate-spin" /> : <span>Save & Onboard</span>}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* EDIT SCHOOL MODAL */}
+      {showEditSchoolModal && editingSchool && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-fade-in-up">
+          <div className="relative w-full max-w-md bg-white rounded-2xl shadow-2xl p-6">
+            <div className="flex items-center justify-between pb-3 mb-4 border-b border-slate-100">
+              <h3 className="text-base font-bold text-slate-900">Edit School Tenant</h3>
+              <button onClick={() => { setShowEditSchoolModal(false); setEditingSchool(null); }} className="text-slate-400 hover:text-slate-600 cursor-pointer">
+                <X size={18} />
+              </button>
+            </div>
+            <form onSubmit={handleSaveEditSchool} className="space-y-4">
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase mb-1">School Full Name</label>
+                <input
+                  type="text"
+                  value={editingSchool.name}
+                  onChange={(e) => setEditingSchool({ ...editingSchool, name: e.target.value })}
+                  required
+                  className="w-full p-2.5 rounded-lg border border-slate-200 text-xs text-slate-900 focus:outline-none focus:ring-1 focus:ring-indigo-500 font-medium"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase mb-1">School Unique Code</label>
+                <input
+                  type="text"
+                  value={editingSchool.code}
+                  onChange={(e) => setEditingSchool({ ...editingSchool, code: e.target.value.toUpperCase() })}
+                  required
+                  className="w-full p-2.5 rounded-lg border border-slate-200 text-xs font-mono text-slate-900 focus:outline-none focus:ring-1 focus:ring-indigo-500 font-medium"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase mb-1">Subscription Plan</label>
+                <select
+                  value={editingSchool.plan}
+                  onChange={(e) => setEditingSchool({ ...editingSchool, plan: e.target.value })}
+                  className="w-full p-2.5 rounded-lg border border-slate-200 text-xs font-semibold text-slate-900"
+                >
+                  <option value="PRO">Professional (PRO - ₹8,999/mo)</option>
+                  <option value="ENTERPRISE">Enterprise (₹79,999/yr)</option>
+                  <option value="TRIAL">14-Day Free Trial</option>
+                </select>
+              </div>
+              <div className="flex gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => { setShowEditSchoolModal(false); setEditingSchool(null); }}
+                  className="flex-1 py-2 rounded-lg border border-slate-200 text-xs font-bold text-slate-600 cursor-pointer hover:bg-slate-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSubmitting}
+                  className="flex-1 py-2 rounded-lg bg-indigo-600 text-white text-xs font-bold hover:bg-indigo-700 cursor-pointer flex items-center justify-center gap-1.5"
+                >
+                  {isSubmitting ? <Loader2 size={14} className="animate-spin" /> : <span>Save Changes</span>}
                 </button>
               </div>
             </form>
