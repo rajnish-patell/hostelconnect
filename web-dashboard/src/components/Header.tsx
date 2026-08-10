@@ -24,6 +24,7 @@ interface HeaderProps {
   onLogout: () => void;
   selectedTenant: SchoolTenant;
   onSelectTenant: (tenant: SchoolTenant) => void;
+  schools?: SchoolTenant[];
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -32,10 +33,12 @@ export const Header: React.FC<HeaderProps> = ({
   currentUser,
   onLogout,
   selectedTenant,
-  onSelectTenant
+  onSelectTenant,
+  schools = ALL_SCHOOL_TENANTS,
 }) => {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const isSuperAdmin = currentUser?.role === 'SUPER_ADMIN';
+  const tenantList = schools && schools.length > 0 ? schools : ALL_SCHOOL_TENANTS;
 
   return (
     <header className="bg-white/95 backdrop-blur-md border-b border-slate-200/80 sticky top-0 z-50 shadow-xs">
@@ -58,12 +61,12 @@ export const Header: React.FC<HeaderProps> = ({
               ) : (
                 <span className="hidden md:inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-600 border border-slate-200">
                   <Lock size={10} className="text-slate-400" />
-                  <span>{currentUser?.schoolCode || 'SCH-DAP'}</span>
+                  <span>{currentUser?.schoolCode || selectedTenant?.code || 'SCH-DAP'}</span>
                 </span>
               )}
             </div>
             <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mt-0.5 truncate max-w-[150px] sm:max-w-none">
-              {isSuperAdmin ? 'Master Multi-Tenant Console' : (currentUser?.schoolName || 'Delhi Public School')}
+              {isSuperAdmin ? 'Master Multi-Tenant Console' : (currentUser?.schoolName || selectedTenant?.name || 'Delhi Public School')}
             </span>
           </div>
         </div>
@@ -102,12 +105,12 @@ export const Header: React.FC<HeaderProps> = ({
                 <select
                   value={selectedTenant.code}
                   onChange={(e) => {
-                    const found = ALL_SCHOOL_TENANTS.find(t => t.code === e.target.value);
+                    const found = tenantList.find(t => t.code === e.target.value);
                     if (found) onSelectTenant(found);
                   }}
-                  className="bg-white border border-indigo-200 text-xs font-bold text-slate-800 rounded-lg px-2.5 py-1 focus:outline-none focus:ring-1 focus:ring-indigo-500 cursor-pointer"
+                  className="bg-white border border-indigo-200 text-xs font-bold text-slate-800 rounded-lg px-2.5 py-1 focus:outline-none focus:ring-1 focus:ring-indigo-500 cursor-pointer font-medium"
                 >
-                  {ALL_SCHOOL_TENANTS.map((tenant) => (
+                  {tenantList.map((tenant) => (
                     <option key={tenant.code} value={tenant.code}>
                       {tenant.name} ({tenant.code})
                     </option>
@@ -120,7 +123,7 @@ export const Header: React.FC<HeaderProps> = ({
           /* Regular School Admin: Strictly restricted to their single school tenant */
           <div className="hidden lg:flex items-center gap-2 bg-slate-100/90 py-2 px-4 rounded-xl border border-slate-200/60 text-xs font-bold text-slate-700">
             <Building2 size={15} className="text-cyan-600" />
-            <span>{currentUser?.schoolName || 'Delhi Public School'} ({currentUser?.schoolCode || 'SCH-DAP'})</span>
+            <span>{currentUser?.schoolName || selectedTenant.name} ({currentUser?.schoolCode || selectedTenant.code})</span>
           </div>
         )}
 
@@ -193,7 +196,7 @@ export const Header: React.FC<HeaderProps> = ({
                   <select
                     value={selectedTenant.code}
                     onChange={(e) => {
-                      const found = ALL_SCHOOL_TENANTS.find(t => t.code === e.target.value);
+                      const found = tenantList.find(t => t.code === e.target.value);
                       if (found) {
                         onSelectTenant(found);
                         setMobileMenuOpen(false);
@@ -201,7 +204,7 @@ export const Header: React.FC<HeaderProps> = ({
                     }}
                     className="w-full bg-white border border-indigo-200 text-xs font-bold text-slate-800 rounded-xl p-2.5"
                   >
-                    {ALL_SCHOOL_TENANTS.map((tenant) => (
+                    {tenantList.map((tenant) => (
                       <option key={tenant.code} value={tenant.code}>
                         {tenant.name} ({tenant.code})
                       </option>

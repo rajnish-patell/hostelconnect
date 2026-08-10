@@ -1,5 +1,6 @@
 import { AuthService } from '../src/auth/auth.service';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { EmailService } from '../src/common/email/email.service';
 import * as bcrypt from 'bcrypt';
 import { JwtService } from '@nestjs/jwt';
 
@@ -9,14 +10,17 @@ jest.mock('bcrypt', () => ({
 }));
 
 describe('AuthService', () => {
-  let prisma: { user: { findUnique: jest.Mock; create: jest.Mock }; student: { findUnique: jest.Mock; create: jest.Mock }; parent: { create: jest.Mock }; $disconnect: jest.Mock };
+  let prisma: { user: { findUnique: jest.Mock; findFirst: jest.Mock; create: jest.Mock; update: jest.Mock }; student: { findUnique: jest.Mock; create: jest.Mock }; parent: { create: jest.Mock }; $disconnect: jest.Mock };
+  let emailService: EmailService;
   let service: AuthService;
 
   beforeEach(() => {
     prisma = {
       user: {
         findUnique: jest.fn(),
+        findFirst: jest.fn(),
         create: jest.fn(),
+        update: jest.fn(),
       },
       student: {
         findUnique: jest.fn(),
@@ -28,11 +32,17 @@ describe('AuthService', () => {
       $disconnect: jest.fn(),
     } as any;
 
-    service = new AuthService(prisma as unknown as PrismaService, new JwtService({ secret: 'test-secret' }));
+    emailService = {
+      sendEmail: jest.fn().mockResolvedValue(true),
+      sendPasswordResetEmail: jest.fn().mockResolvedValue(true),
+    } as any;
+
+    service = new AuthService(prisma as unknown as PrismaService, new JwtService({ secret: 'test-secret' }), emailService);
   });
 
   it('registers a new user with a hashed password and returns a token', async () => {
     (bcrypt.hash as jest.Mock).mockResolvedValue('hashed-password');
+    prisma.user.findUnique.mockResolvedValue(null);
     prisma.user.create.mockResolvedValue({ id: 'user-1', email: 'admin@example.com', phoneNumber: '999', fullName: 'Admin', role: 'SCHOOL_ADMIN' });
 
     const result = await service.register({
@@ -49,9 +59,31 @@ describe('AuthService', () => {
   });
 
   it('rejects invalid login credentials', async () => {
-    prisma.user.findUnique.mockResolvedValue(null);
+    prisma.user.findFirst.mockResolvedValue(null);
     (bcrypt.compare as jest.Mock).mockResolvedValue(false);
 
-    await expect(service.login({ identifier: 'missing@example.com', password: 'wrong' })).rejects.toThrow('Invalid credentials');
+    await expect(service.login({ identifier: 'nonexistent@example.com', password: 'wrong' })).rejects.toThrow('Invalid credentials');
+  });
+
+  it('generates a 6-digit password reset token and dispatches email', async () => {
+    const result = await service.forgotPassword({ email: 'patelrajnish47@gmail.com' });
+    expect(result.success).toBe(true);
+    expect(result.expiresInMinutes).toBe(15);
+    expect(emailService.sendPasswordResetEmail).toHaveBeenCalled();
+  });
+
+  it('verifies valid reset token and completes password reset', async () => {
+    const forgotRes = await service.forgotPassword({ email: 'user@example.com' });
+    const token = (forgotRes as any).devToken;
+
+    const verifyRes = await service.verifyResetToken({ token });
+    expect(verifyRes.valid).toBe(true);
+
+    (bcrypt.hash as jest.Mock).mockResolvedValue('new-hashed-password');
+    const resetRes = await service.resetPassword({ token, newPassword: 'NewSecurePassword123!' });
+    expect(resetRes.success).toBe(true);
+
+    // Reusing the same token should fail
+    await expect(service.resetPassword({ token, newPassword: 'AnotherPassword' })).rejects.toThrow();
   });
 });

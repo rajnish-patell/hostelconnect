@@ -5,6 +5,7 @@ import { SuperAdminDashboard } from './components/SuperAdminDashboard';
 import { PreJoinLobby } from './components/PreJoinLobby';
 import { GoogleMeetRoom } from './components/GoogleMeetRoom';
 import { AuthScreen, UserSession } from './components/AuthScreen';
+import { api } from './services/api';
 
 type AppView = 'auth' | 'dashboard' | 'prejoin' | 'inCall';
 
@@ -19,13 +20,34 @@ interface CallConfig {
 }
 
 export default function App() {
-  // Always require explicit authentication on application load
   const [currentUser, setCurrentUser] = useState<UserSession | null>(null);
-
   const [portalRole, setPortalRole] = useState<'SCHOOL_ADMIN' | 'SUPER_ADMIN'>('SUPER_ADMIN');
+  const [schools, setSchools] = useState<SchoolTenant[]>(ALL_SCHOOL_TENANTS);
   const [selectedTenant, setSelectedTenant] = useState<SchoolTenant>(ALL_SCHOOL_TENANTS[0]);
   const [view, setView] = useState<AppView>('dashboard');
   const [callConfig, setCallConfig] = useState<CallConfig | null>(null);
+
+  // Load schools from backend API
+  useEffect(() => {
+    api.schools
+      .getAll()
+      .then((data) => {
+        if (data && data.length > 0) {
+          const mapped = data.map((s) => ({
+            id: s.id,
+            code: s.code,
+            name: s.name,
+            students: s.students || 0,
+            tablets: s.tablets || 0,
+          }));
+          setSchools(mapped);
+          setSelectedTenant(mapped[0]);
+        }
+      })
+      .catch((err) => {
+        console.warn('Using default schools fallback list:', err);
+      });
+  }, []);
 
   // Restore a persisted session on initial load when available
   useEffect(() => {
@@ -40,10 +62,9 @@ export default function App() {
       setCurrentUser(parsedSession);
       if (parsedSession.role === 'SUPER_ADMIN') {
         setPortalRole('SUPER_ADMIN');
-        setSelectedTenant(ALL_SCHOOL_TENANTS[0]);
       } else {
         setPortalRole('SCHOOL_ADMIN');
-        const matched = ALL_SCHOOL_TENANTS.find(t => t.code === parsedSession.schoolCode) || ALL_SCHOOL_TENANTS[0];
+        const matched = schools.find((t) => t.code === parsedSession.schoolCode) || schools[0];
         setSelectedTenant(matched);
       }
       setView('dashboard');
@@ -51,7 +72,7 @@ export default function App() {
       localStorage.removeItem('hostelconnect_user_session');
       sessionStorage.removeItem('hostelconnect_user_session');
     }
-  }, []);
+  }, [schools]);
 
   // Check URL params for direct join (parent opening shared link)
   useEffect(() => {
@@ -79,13 +100,12 @@ export default function App() {
     localStorage.setItem('hostelconnect_user_session', JSON.stringify(session));
     sessionStorage.setItem('hostelconnect_user_session', JSON.stringify(session));
 
-    // Multi-tenant permission logic: Only SUPER_ADMIN can access Super Admin Console & All Tenants
     if (session.role === 'SUPER_ADMIN') {
       setPortalRole('SUPER_ADMIN');
-      setSelectedTenant(ALL_SCHOOL_TENANTS[0]);
+      setSelectedTenant(schools[0]);
     } else {
       setPortalRole('SCHOOL_ADMIN');
-      const matched = ALL_SCHOOL_TENANTS.find(t => t.code === session.schoolCode) || ALL_SCHOOL_TENANTS[0];
+      const matched = schools.find((t) => t.code === session.schoolCode) || schools[0];
       setSelectedTenant(matched);
     }
     setView('dashboard');
@@ -173,7 +193,6 @@ export default function App() {
       <Header
         portalRole={portalRole}
         onSwitchPortal={(role) => {
-          // Strictly protect: Non-super admins cannot switch to SUPER_ADMIN
           if (role === 'SUPER_ADMIN' && !isSuperAdmin) {
             alert('Access Denied: Only Super Admin can access all tenants and the Super Admin console.');
             return;
@@ -184,6 +203,7 @@ export default function App() {
         onLogout={handleLogout}
         selectedTenant={selectedTenant}
         onSelectTenant={setSelectedTenant}
+        schools={schools}
       />
 
       <main className="flex-1 p-4 sm:p-6 lg:p-8 max-w-[1600px] w-full mx-auto">
@@ -225,7 +245,7 @@ export default function App() {
               </h2>
               <p className="text-sm text-slate-500 mb-6 leading-relaxed">
                 Welcome, <span className="font-semibold text-slate-700">{currentUser?.name}</span>! 
-                Tenant: <span className="font-semibold text-indigo-600">{currentUser?.schoolName || 'Delhi Public School'}</span>
+                Tenant: <span className="font-semibold text-indigo-600">{selectedTenant?.name || currentUser?.schoolName || 'Delhi Public School'}</span>
               </p>
               <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-4 text-xs text-indigo-700 font-medium">
                 🔒 Your session is securely isolated to your school hostel network.

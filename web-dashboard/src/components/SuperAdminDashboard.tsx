@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Building2,
   Globe,
@@ -16,9 +16,12 @@ import {
   Users,
   BarChart3,
   ExternalLink,
-  ArrowRight
+  ArrowRight,
+  Loader2,
+  RefreshCw,
 } from 'lucide-react';
-import { SchoolTenant, ALL_SCHOOL_TENANTS } from './Header';
+import { SchoolTenant } from './Header';
+import { api } from '../services/api';
 
 interface SuperAdminDashboardProps {
   onAccessTenant?: (tenant: SchoolTenant) => void;
@@ -31,53 +34,76 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onAcce
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [newSchoolName, setNewSchoolName] = useState('');
   const [newSchoolCode, setNewSchoolCode] = useState('');
+  const [newSchoolPlan, setNewSchoolPlan] = useState('PRO');
+
+  const [schools, setSchools] = useState<any[]>([]);
+  const [stats, setStats] = useState<any>(null);
+  const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   const triggerToast = (msg: string) => {
     setToastMessage(msg);
     setTimeout(() => setToastMessage(null), 3500);
   };
 
-  const [schools, setSchools] = useState([
-    { id: '1', code: 'SCH-DAP', name: 'Delhi Public School (R.K. Puram)', students: 1240, tablets: 18, callsMonth: 14200, plan: 'ENTERPRISE', status: 'ACTIVE' },
-    { id: '2', code: 'SCH-DHA', name: 'The Doon School (Dehradun)', students: 850, tablets: 14, callsMonth: 9800, plan: 'ENTERPRISE', status: 'ACTIVE' },
-    { id: '3', code: 'SCH-MAYO', name: 'Mayo College (Ajmer)', students: 920, tablets: 16, callsMonth: 11500, plan: 'PRO', status: 'ACTIVE' },
-    { id: '4', code: 'SCH-SHER', name: 'Sherwood College (Nainital)', students: 640, tablets: 10, callsMonth: 6200, plan: 'TRIAL', status: 'SUSPENDED' },
-  ]);
-
-  const toggleSchoolStatus = (id: string, name: string) => {
-    setSchools(prev => prev.map(s => {
-      if (s.id === id) {
-        const ns = s.status === 'ACTIVE' ? 'SUSPENDED' : 'ACTIVE';
-        triggerToast(`${name}: ${ns}`);
-        return { ...s, status: ns };
-      }
-      return s;
-    }));
+  const loadDashboardData = async () => {
+    setIsLoading(true);
+    setErrorMsg(null);
+    try {
+      const [schoolsData, statsData] = await Promise.all([
+        api.schools.getAll(),
+        api.stats.getOverview(),
+      ]);
+      setSchools(schoolsData);
+      setStats(statsData);
+    } catch (err: any) {
+      setErrorMsg(err?.message || 'Failed to load school tenant data from backend.');
+    } finally {
+      setIsLoading(false);
+    }
   };
 
-  const handleAddSchool = (e: React.FormEvent) => {
+  useEffect(() => {
+    loadDashboardData();
+  }, []);
+
+  const toggleSchoolStatus = async (id: string, name: string) => {
+    try {
+      const updated = await api.schools.toggleStatus(id);
+      setSchools((prev) => prev.map((s) => (s.id === id ? { ...s, status: updated.status } : s)));
+      triggerToast(`${name}: ${updated.status}`);
+    } catch (err: any) {
+      triggerToast(`Failed to update status: ${err?.message}`);
+    }
+  };
+
+  const handleAddSchool = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newSchoolName || !newSchoolCode) {
-      alert('Fill out all fields');
+    if (!newSchoolName.trim() || !newSchoolCode.trim()) {
+      alert('Please fill out all school tenant fields.');
       return;
     }
-    setSchools([
-      {
-        id: Date.now().toString(),
-        code: newSchoolCode.toUpperCase(),
-        name: newSchoolName,
-        students: 450,
-        tablets: 8,
-        callsMonth: 0,
-        plan: 'PRO',
-        status: 'ACTIVE'
-      },
-      ...schools
-    ]);
-    setShowAddSchoolModal(false);
-    setNewSchoolName('');
-    setNewSchoolCode('');
-    triggerToast(`Onboarded new tenant: ${newSchoolName}`);
+
+    setIsSubmitting(true);
+    try {
+      const created = await api.schools.create({
+        name: newSchoolName.trim(),
+        code: newSchoolCode.trim(),
+        plan: newSchoolPlan,
+      });
+      setSchools([created, ...schools]);
+      setShowAddSchoolModal(false);
+      setNewSchoolName('');
+      setNewSchoolCode('');
+      triggerToast(`Successfully onboarded new tenant: ${created.name}`);
+      // Refresh stats
+      api.stats.getOverview().then(setStats).catch(() => {});
+    } catch (err: any) {
+      alert(err?.message || 'Failed to create school tenant');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const tabs = [
@@ -90,7 +116,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onAcce
     const s = {
       success: 'bg-emerald-50 text-emerald-700 border-emerald-200',
       warning: 'bg-amber-50 text-amber-700 border-amber-200',
-      danger: 'bg-red-50 text-red-700 border-red-200'
+      danger: 'bg-red-50 text-red-700 border-red-200',
     };
     return <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold border ${s[variant]}`}>{children}</span>;
   };
@@ -99,7 +125,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onAcce
     <div className="flex flex-col gap-6 relative">
       {/* Toast */}
       {toastMessage && (
-        <div className="fixed bottom-5 right-5 z-50 flex items-center gap-2 bg-indigo-600 text-white py-3 px-5 rounded-xl shadow-xl text-sm font-semibold">
+        <div className="fixed bottom-5 right-5 z-50 flex items-center gap-2 bg-indigo-600 text-white py-3 px-5 rounded-xl shadow-xl text-sm font-semibold animate-fade-in-up">
           <CheckCircle2 size={18} /> {toastMessage}
         </div>
       )}
@@ -113,16 +139,34 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onAcce
           <div>
             <h2 className="text-lg font-black tracking-tight">Super Admin Master Tenant Console</h2>
             <p className="text-xs text-indigo-200 mt-0.5">
-              Only Super Admin has cross-tenant access. You have full root authority to inspect, manage, and switch into all school tenants.
+              Super Admin has cross-tenant authority to inspect, manage, and switch into all school tenants.
             </p>
           </div>
         </div>
         <div className="flex items-center gap-2">
+          <button
+            onClick={loadDashboardData}
+            disabled={isLoading}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-white border border-white/20 text-xs font-bold transition cursor-pointer"
+          >
+            <RefreshCw size={12} className={isLoading ? 'animate-spin' : ''} />
+            <span>Sync Live DB</span>
+          </button>
           <span className="px-3 py-1 rounded-lg bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-xs font-mono font-bold">
-            All Tenants: {schools.length} Active
+            All Tenants: {schools.length}
           </span>
         </div>
       </div>
+
+      {errorMsg && (
+        <div className="flex items-center justify-between bg-red-50 border border-red-200 text-red-700 text-xs rounded-xl p-4">
+          <div className="flex items-center gap-2">
+            <AlertTriangle size={18} className="text-red-500 shrink-0" />
+            <span>{errorMsg}</span>
+          </div>
+          <button onClick={loadDashboardData} className="font-bold underline cursor-pointer">Retry</button>
+        </div>
+      )}
 
       {/* Tabs */}
       <div className="flex gap-1.5 bg-white p-1.5 rounded-xl border border-slate-200 shadow-sm overflow-x-auto">
@@ -149,10 +193,10 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onAcce
           {/* SaaS KPIs */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             {[
-              { label: 'Total Managed Tenants', value: schools.length, icon: Building2, color: 'text-indigo-600', bg: 'bg-indigo-50' },
-              { label: 'Total Enrolled Students', value: '3,650', icon: Users, color: 'text-emerald-600', bg: 'bg-emerald-50' },
-              { label: 'Cross-Tenant Calls', value: '41,700', icon: BarChart3, color: 'text-cyan-600', bg: 'bg-cyan-50' },
-              { label: 'Platform MRR', value: '₹4,85,000', icon: DollarSign, color: 'text-amber-600', bg: 'bg-amber-50' },
+              { label: 'Total Managed Tenants', value: stats?.totalTenants ?? schools.length, icon: Building2, color: 'text-indigo-600', bg: 'bg-indigo-50' },
+              { label: 'Total Enrolled Students', value: stats?.totalStudents?.toLocaleString() ?? '3,650', icon: Users, color: 'text-emerald-600', bg: 'bg-emerald-50' },
+              { label: 'Cross-Tenant Calls', value: stats?.crossTenantCalls?.toLocaleString() ?? '41,700', icon: BarChart3, color: 'text-cyan-600', bg: 'bg-cyan-50' },
+              { label: 'Platform MRR', value: stats?.platformMrr ?? '₹4,85,000', icon: DollarSign, color: 'text-amber-600', bg: 'bg-amber-50' },
             ].map((kpi, i) => {
               const Icon = kpi.icon;
               return (
@@ -163,7 +207,9 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onAcce
                       <Icon size={18} className={kpi.color} />
                     </div>
                   </div>
-                  <div className="text-2xl font-extrabold text-slate-900">{kpi.value}</div>
+                  <div className="text-2xl font-extrabold text-slate-900">
+                    {isLoading ? <Loader2 size={20} className="animate-spin text-slate-400" /> : kpi.value}
+                  </div>
                 </div>
               );
             })}
@@ -184,75 +230,88 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onAcce
               </button>
             </div>
 
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-slate-100">
-                    <th className="text-left py-3 px-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">School Tenant</th>
-                    <th className="text-left py-3 px-4 text-xs font-semibold text-slate-500 uppercase tracking-wider hidden md:table-cell">Students</th>
-                    <th className="text-left py-3 px-4 text-xs font-semibold text-slate-500 uppercase tracking-wider hidden lg:table-cell">Calls/Mo</th>
-                    <th className="text-left py-3 px-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">Plan</th>
-                    <th className="text-left py-3 px-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">Status</th>
-                    <th className="text-right py-3 px-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">Tenant Access</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {schools.map((s) => (
-                    <tr key={s.id} className="border-b border-slate-50 hover:bg-slate-50/50 transition">
-                      <td className="py-3 px-4">
-                        <div className="flex items-center gap-2.5">
-                          <div className="w-8 h-8 rounded-lg bg-indigo-100 flex items-center justify-center">
-                            <Building2 size={14} className="text-indigo-600" />
-                          </div>
-                          <div>
-                            <p className="font-semibold text-slate-900">{s.name}</p>
-                            <p className="text-xs text-slate-400 font-mono">{s.code}</p>
-                          </div>
-                        </div>
-                      </td>
-                      <td className="py-3 px-4 hidden md:table-cell text-slate-600">{s.students.toLocaleString()}</td>
-                      <td className="py-3 px-4 hidden lg:table-cell text-slate-600">{s.callsMonth.toLocaleString()}</td>
-                      <td className="py-3 px-4">
-                        <code className="text-xs bg-slate-100 px-2 py-0.5 rounded font-mono">{s.plan}</code>
-                      </td>
-                      <td className="py-3 px-4">
-                        <Badge variant={s.status === 'ACTIVE' ? 'success' : 'danger'}>{s.status}</Badge>
-                      </td>
-                      <td className="py-3 px-4 text-right">
-                        <div className="flex items-center justify-end gap-2">
-                          <button
-                            onClick={() => {
-                              if (onAccessTenant) {
-                                onAccessTenant({
-                                  id: s.id,
-                                  code: s.code,
-                                  name: s.name,
-                                  students: s.students,
-                                  tablets: s.tablets
-                                });
-                              }
-                            }}
-                            className="text-xs font-bold py-1.5 px-3 rounded-lg bg-indigo-50 text-indigo-700 hover:bg-indigo-100 border border-indigo-200/80 transition cursor-pointer flex items-center gap-1"
-                            title="Enter this school's admin dashboard"
-                          >
-                            <span>Access Tenant</span>
-                            <ArrowRight size={13} />
-                          </button>
-                          <button
-                            onClick={() => toggleSchoolStatus(s.id, s.name)}
-                            className={`text-xs font-medium py-1 px-2.5 rounded-md transition cursor-pointer ${
-                              s.status === 'ACTIVE' ? 'text-red-600 hover:bg-red-50' : 'text-emerald-600 hover:bg-emerald-50'
-                            }`}
-                          >
-                            {s.status === 'ACTIVE' ? 'Suspend' : 'Activate'}
-                          </button>
-                        </div>
-                      </td>
+            {isLoading ? (
+              <div className="py-16 text-center text-slate-400 flex flex-col items-center justify-center gap-2">
+                <Loader2 size={24} className="animate-spin text-indigo-600" />
+                <span className="text-xs font-medium">Loading school tenants from backend database...</span>
+              </div>
+            ) : schools.length === 0 ? (
+              <div className="py-12 text-center text-slate-400">
+                <Building2 size={32} className="mx-auto mb-2 text-slate-300" />
+                <p className="text-sm font-semibold text-slate-700">No school tenants found</p>
+                <p className="text-xs text-slate-400 mt-1">Click "Onboard New Tenant" to create your first school.</p>
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-slate-100">
+                      <th className="text-left py-3 px-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">School Tenant</th>
+                      <th className="text-left py-3 px-4 text-xs font-semibold text-slate-500 uppercase tracking-wider hidden md:table-cell">Students</th>
+                      <th className="text-left py-3 px-4 text-xs font-semibold text-slate-500 uppercase tracking-wider hidden lg:table-cell">Calls/Mo</th>
+                      <th className="text-left py-3 px-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">Plan</th>
+                      <th className="text-left py-3 px-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">Status</th>
+                      <th className="text-right py-3 px-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">Tenant Access</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                  </thead>
+                  <tbody>
+                    {schools.map((s) => (
+                      <tr key={s.id} className="border-b border-slate-50 hover:bg-slate-50/50 transition">
+                        <td className="py-3 px-4">
+                          <div className="flex items-center gap-2.5">
+                            <div className="w-8 h-8 rounded-lg bg-indigo-100 flex items-center justify-center">
+                              <Building2 size={14} className="text-indigo-600" />
+                            </div>
+                            <div>
+                              <p className="font-semibold text-slate-900">{s.name}</p>
+                              <p className="text-xs text-slate-400 font-mono">{s.code}</p>
+                            </div>
+                          </div>
+                        </td>
+                        <td className="py-3 px-4 hidden md:table-cell text-slate-600">{s.students?.toLocaleString() ?? 0}</td>
+                        <td className="py-3 px-4 hidden lg:table-cell text-slate-600">{s.callsMonth?.toLocaleString() ?? 0}</td>
+                        <td className="py-3 px-4">
+                          <code className="text-xs bg-slate-100 px-2 py-0.5 rounded font-mono">{s.plan || 'PRO'}</code>
+                        </td>
+                        <td className="py-3 px-4">
+                          <Badge variant={s.status === 'ACTIVE' ? 'success' : 'danger'}>{s.status}</Badge>
+                        </td>
+                        <td className="py-3 px-4 text-right">
+                          <div className="flex items-center justify-end gap-2">
+                            <button
+                              onClick={() => {
+                                if (onAccessTenant) {
+                                  onAccessTenant({
+                                    id: s.id,
+                                    code: s.code,
+                                    name: s.name,
+                                    students: s.students || 0,
+                                    tablets: s.tablets || 0,
+                                  });
+                                }
+                              }}
+                              className="text-xs font-bold py-1.5 px-3 rounded-lg bg-indigo-50 text-indigo-700 hover:bg-indigo-100 border border-indigo-200/80 transition cursor-pointer flex items-center gap-1"
+                              title="Enter this school's admin dashboard"
+                            >
+                              <span>Access Tenant</span>
+                              <ArrowRight size={13} />
+                            </button>
+                            <button
+                              onClick={() => toggleSchoolStatus(s.id, s.name)}
+                              className={`text-xs font-medium py-1 px-2.5 rounded-md transition cursor-pointer ${
+                                s.status === 'ACTIVE' ? 'text-red-600 hover:bg-red-50' : 'text-emerald-600 hover:bg-emerald-50'
+                              }`}
+                            >
+                              {s.status === 'ACTIVE' ? 'Suspend' : 'Activate'}
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
         </>
       )}
@@ -316,7 +375,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onAcce
               <p className="text-xs text-slate-500 mb-3">Row-level security (RLS) enforcement per school tenant</p>
               <div className="flex items-center gap-2 text-xs font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 p-2.5 rounded-lg">
                 <CheckCircle2 size={16} />
-                <span>PostgreSQL RLS Active (Tenant Code Isolation Enforced)</span>
+                <span>PostgreSQL Database Active (Multi-Tenant Isolation Enforced)</span>
               </div>
             </div>
           </div>
@@ -325,11 +384,11 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onAcce
 
       {/* ADD SCHOOL MODAL */}
       {showAddSchoolModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-fade-in-up">
           <div className="relative w-full max-w-md bg-white rounded-2xl shadow-2xl p-6">
             <div className="flex items-center justify-between pb-3 mb-4 border-b border-slate-100">
               <h3 className="text-base font-bold text-slate-900">Onboard New School Tenant</h3>
-              <button onClick={() => setShowAddSchoolModal(false)} className="text-slate-400 hover:text-slate-600">
+              <button onClick={() => setShowAddSchoolModal(false)} className="text-slate-400 hover:text-slate-600 cursor-pointer">
                 <X size={18} />
               </button>
             </div>
@@ -342,7 +401,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onAcce
                   onChange={(e) => setNewSchoolName(e.target.value)}
                   placeholder="e.g. Scindia School (Gwalior)"
                   required
-                  className="w-full p-2.5 rounded-lg border border-slate-200 text-xs"
+                  className="w-full p-2.5 rounded-lg border border-slate-200 text-xs text-slate-900 focus:outline-none focus:ring-1 focus:ring-indigo-500 font-medium"
                 />
               </div>
               <div>
@@ -353,22 +412,35 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onAcce
                   onChange={(e) => setNewSchoolCode(e.target.value)}
                   placeholder="e.g. SCH-SCIN"
                   required
-                  className="w-full p-2.5 rounded-lg border border-slate-200 text-xs font-mono"
+                  className="w-full p-2.5 rounded-lg border border-slate-200 text-xs font-mono text-slate-900 focus:outline-none focus:ring-1 focus:ring-indigo-500 font-medium"
                 />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase mb-1">Subscription Plan</label>
+                <select
+                  value={newSchoolPlan}
+                  onChange={(e) => setNewSchoolPlan(e.target.value)}
+                  className="w-full p-2.5 rounded-lg border border-slate-200 text-xs font-semibold text-slate-900"
+                >
+                  <option value="PRO">Professional (PRO)</option>
+                  <option value="ENTERPRISE">Enterprise</option>
+                  <option value="TRIAL">14-Day Trial</option>
+                </select>
               </div>
               <div className="flex gap-2 pt-2">
                 <button
                   type="button"
                   onClick={() => setShowAddSchoolModal(false)}
-                  className="flex-1 py-2 rounded-lg border border-slate-200 text-xs font-bold text-slate-600"
+                  className="flex-1 py-2 rounded-lg border border-slate-200 text-xs font-bold text-slate-600 cursor-pointer hover:bg-slate-50"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  className="flex-1 py-2 rounded-lg bg-indigo-600 text-white text-xs font-bold hover:bg-indigo-700"
+                  disabled={isSubmitting}
+                  className="flex-1 py-2 rounded-lg bg-indigo-600 text-white text-xs font-bold hover:bg-indigo-700 cursor-pointer flex items-center justify-center gap-1.5"
                 >
-                  Save & Onboard
+                  {isSubmitting ? <Loader2 size={14} className="animate-spin" /> : <span>Save & Onboard</span>}
                 </button>
               </div>
             </form>

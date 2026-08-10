@@ -1,11 +1,12 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Users, PhoneCall, Video, Wallet, Tablet, Settings, Search, Plus, UserCheck, Lock, Unlock,
   RefreshCw, FileText, ArrowUpRight, ShieldCheck, CheckCircle2, AlertTriangle, Play, X,
-  Link as LinkIcon, Copy, Check, TrendingUp, Clock, MoreVertical, LayoutDashboard, ChevronRight, Menu
+  Link as LinkIcon, Copy, Check, TrendingUp, Clock, MoreVertical, LayoutDashboard, ChevronRight, Menu, Loader2
 } from 'lucide-react';
 
 import { SchoolTenant } from './Header';
+import { api } from '../services/api';
 
 interface SchoolAdminDashboardProps {
   onStartCall?: (config: { studentName: string; parentName: string; hostelBlock: string; roomId: string }) => void;
@@ -23,90 +24,150 @@ export const SchoolAdminDashboard: React.FC<SchoolAdminDashboardProps> = ({ onSt
   const [newStudentGrade, setNewStudentGrade] = useState('Grade 9-B');
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
+  const [students, setStudents] = useState<any[]>([]);
+  const [parents, setParents] = useState<any[]>([]);
+  const [tablets, setTablets] = useState<any[]>([]);
+  const [activeCalls, setActiveCalls] = useState<any[]>([]);
+  const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
   const triggerToast = (msg: string) => { setToastMessage(msg); setTimeout(() => setToastMessage(null), 3500); };
 
-  const [activeCalls, setActiveCalls] = useState([
-    { id: 'call-9941', studentName: 'Aarav Sharma', parentName: 'Rajesh Sharma', hostelBlock: 'Block A (Boys)', tabletDevice: 'Tablet-A01', startTime: '18:42', duration: '04:05' },
-    { id: 'call-9942', studentName: 'Ananya Verma', parentName: 'Meenakshi Verma', hostelBlock: 'Block C (Girls)', tabletDevice: 'Tablet-C04', startTime: '18:45', duration: '01:12' },
-  ]);
-
-  const [students, setStudents] = useState([
-    { id: '1', name: 'Aarav Sharma', code: 'STU-1001', room: 'A-204', grade: 'Grade 9-B', status: 'Active', pin: '4819', parent: 'Rajesh Sharma' },
-    { id: '2', name: 'Ananya Verma', code: 'STU-1002', room: 'C-108', grade: 'Grade 10-A', status: 'Active', pin: '3920', parent: 'Meenakshi Verma' },
-    { id: '3', name: 'Rohan Mehta', code: 'STU-1003', room: 'B-302', grade: 'Grade 8-C', status: 'Active', pin: '5192', parent: 'Suresh Mehta' },
-    { id: '4', name: 'Priya Nambiar', code: 'STU-1004', room: 'C-215', grade: 'Grade 11-B', status: 'Active', pin: '9041', parent: 'Ramesh Nambiar' },
-  ]);
-
-  const [parents, setParents] = useState([
-    { id: 'p1', name: 'Rajesh Sharma', phone: '+91 98765 43210', student: 'Aarav Sharma (STU-1001)', relationship: 'Father', status: 'VERIFIED' },
-    { id: 'p2', name: 'Meenakshi Verma', phone: '+91 98123 45678', student: 'Ananya Verma (STU-1002)', relationship: 'Mother', status: 'VERIFIED' },
-    { id: 'p3', name: 'Suresh Mehta', phone: '+91 99887 76655', student: 'Rohan Mehta (STU-1003)', relationship: 'Father', status: 'PENDING_APPROVAL' },
-  ]);
-
-  const [tablets, setTablets] = useState([
-    { id: 't1', deviceId: 'TAB-A01', name: 'Hostel A Entry Tablet', block: 'Block A', status: 'BUSY', isLocked: true },
-    { id: 't2', deviceId: 'TAB-A02', name: 'Hostel A Common Room', block: 'Block A', status: 'ONLINE', isLocked: true },
-    { id: 't3', deviceId: 'TAB-C04', name: 'Girls Hostel Main Kiosk', block: 'Block C', status: 'BUSY', isLocked: true },
-    { id: 't4', deviceId: 'TAB-B01', name: 'Hostel B Study Hall', block: 'Block B', status: 'OFFLINE', isLocked: false },
-  ]);
-
-  const toggleTabletLock = (id: string) => {
-    setTablets(prev => prev.map(t => {
-      if (t.id === id) { const s = !t.isLocked; triggerToast(`Tablet ${t.deviceId}: ${s ? 'LOCKED' : 'UNLOCKED'}`); return { ...t, isLocked: s }; }
-      return t;
-    }));
+  const loadTenantData = async () => {
+    setIsLoading(true);
+    setErrorMsg(null);
+    const code = tenant?.code || 'SCH-DAP';
+    try {
+      const [stuRes, parRes, tabRes, callRes] = await Promise.all([
+        api.students.getAll(code, searchQuery),
+        api.parents.getAll(code),
+        api.tablets.getAll(code),
+        api.calls.getActive(code),
+      ]);
+      setStudents(stuRes);
+      setParents(parRes);
+      setTablets(tabRes);
+      setActiveCalls(callRes);
+    } catch (err: any) {
+      setErrorMsg(err?.message || 'Failed to fetch school records from backend');
+    } finally {
+      setIsLoading(false);
+    }
   };
 
-  const handleForceEndCall = (callId: string) => { setActiveCalls(prev => prev.filter(c => c.id !== callId)); triggerToast(`Call ${callId} force disconnected.`); };
+  useEffect(() => {
+    loadTenantData();
+  }, [tenant?.code, searchQuery]);
+
+  const toggleTabletLock = async (id: string, deviceId: string) => {
+    try {
+      const updated = await api.tablets.toggleLock(id);
+      setTablets(prev => prev.map(t => t.id === id ? { ...t, isLocked: updated.isLocked } : t));
+      triggerToast(`Tablet ${deviceId}: ${updated.isLocked ? 'LOCKED' : 'UNLOCKED'}`);
+    } catch (err: any) {
+      triggerToast(`Failed to toggle tablet lock: ${err?.message}`);
+    }
+  };
+
+  const handleForceEndCall = async (callId: string) => {
+    try {
+      await api.calls.end(callId, 120, 'ADMIN_FORCE_DISCONNECT');
+      setActiveCalls(prev => prev.filter(c => c.id !== callId));
+      triggerToast(`Call ${callId} force disconnected.`);
+    } catch (err: any) {
+      triggerToast(`Failed to end call: ${err?.message}`);
+    }
+  };
 
   const handleCopyUniqueCallLink = (callId: string, studentName: string) => {
-    const roomName = `room_SCH-DAP_${studentName.toLowerCase().replace(/\s+/g, '')}_${callId}`;
+    const roomName = `room_${tenant?.code || 'SCH-DAP'}_${studentName.toLowerCase().replace(/\s+/g, '')}_${callId}`;
     const link = `${window.location.origin}${window.location.pathname}?room=${roomName}&peerId=pending&role=joiner`;
     navigator.clipboard.writeText(link);
     triggerToast(`Copied call link for ${studentName}`);
   };
 
-  const handleInitiateTestCall = (studentName: string, parentName: string) => {
-    const newCallId = `call-${Math.floor(1000 + Math.random() * 9000)}`;
-    setActiveCalls([{ id: newCallId, studentName, parentName, hostelBlock: 'Block A (Boys)', tabletDevice: 'Tablet-A02', startTime: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), duration: '00:01' }, ...activeCalls]);
-    if (onStartCall) onStartCall({ studentName, parentName, hostelBlock: 'Block A (Boys)', roomId: newCallId });
-    triggerToast(`Starting video call: ${studentName} → ${parentName}`);
+  const handleInitiateTestCall = async (studentName: string, parentName: string) => {
+    try {
+      const callData = await api.calls.initiate({
+        studentId: studentName,
+        parentId: parentName,
+        schoolCode: tenant?.code || 'SCH-DAP',
+      });
+      setActiveCalls([callData, ...activeCalls]);
+      if (onStartCall) {
+        onStartCall({
+          studentName,
+          parentName,
+          hostelBlock: 'Block A (Boys)',
+          roomId: callData.callId,
+        });
+      }
+      triggerToast(`Starting video call: ${studentName} → ${parentName}`);
+    } catch (err: any) {
+      triggerToast(`Call failed: ${err?.message}`);
+    }
   };
 
-  const handleAddStudent = (e: React.FormEvent) => {
+  const handleAddStudent = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newStudentName || !newStudentCode) { alert('Please fill out student name and ID'); return; }
-    const pin = Math.floor(1000 + Math.random() * 9000).toString();
-    setStudents([{ id: Date.now().toString(), name: newStudentName, code: newStudentCode.toUpperCase(), room: newStudentRoom || 'A-101', grade: newStudentGrade, status: 'Active', pin, parent: 'Verified Guardian' }, ...students]);
-    setShowAddStudentModal(false); setNewStudentName(''); setNewStudentCode(''); setNewStudentRoom('');
-    triggerToast(`Created ${newStudentName} (${newStudentCode}) with PIN ${pin}`);
+    if (!newStudentName.trim() || !newStudentCode.trim()) {
+      alert('Please fill out student name and ID');
+      return;
+    }
+    try {
+      const created = await api.students.create({
+        name: newStudentName.trim(),
+        code: newStudentCode.trim(),
+        room: newStudentRoom.trim() || 'A-101',
+        grade: newStudentGrade,
+        schoolCode: tenant?.code || 'SCH-DAP',
+      });
+      setStudents([created, ...students]);
+      setShowAddStudentModal(false);
+      setNewStudentName('');
+      setNewStudentCode('');
+      setNewStudentRoom('');
+      triggerToast(`Created ${created.name} (${created.code}) with PIN ${created.pin}`);
+    } catch (err: any) {
+      alert(err?.message || 'Failed to add student');
+    }
   };
 
-  const handleResetPin = (id: string, name: string) => {
-    const pin = Math.floor(1000 + Math.random() * 9000).toString();
-    setStudents(prev => prev.map(s => s.id === id ? { ...s, pin } : s));
-    triggerToast(`Reset PIN for ${name}: ${pin}`);
+  const handleResetPin = async (id: string, name: string) => {
+    try {
+      const res = await api.students.resetPin(id);
+      setStudents(prev => prev.map(s => s.id === id ? { ...s, pin: res.pin } : s));
+      triggerToast(`Reset PIN for ${name}: ${res.pin}`);
+    } catch (err: any) {
+      triggerToast(`Reset PIN failed: ${err?.message}`);
+    }
   };
 
-  const handleApproveParent = (id: string, name: string) => {
-    setParents(prev => prev.map(p => p.id === id ? { ...p, status: 'VERIFIED' } : p));
-    triggerToast(`Verified ${name}`);
+  const handleApproveParent = async (id: string, name: string) => {
+    try {
+      await api.parents.approve(id);
+      setParents(prev => prev.map(p => p.id === id ? { ...p, status: 'VERIFIED' } : p));
+      triggerToast(`Verified guardian: ${name}`);
+    } catch (err: any) {
+      triggerToast(`Verification failed: ${err?.message}`);
+    }
   };
 
-  const handleExcelImport = () => {
-    setStudents(prev => [
-      { id: Date.now().toString() + '1', name: 'Vikramaditya Rao', code: 'STU-1005', room: 'B-104', grade: 'Grade 12-A', status: 'Active', pin: '7412', parent: 'Sanjay Rao' },
-      { id: Date.now().toString() + '2', name: 'Kavya Sengupta', code: 'STU-1006', room: 'C-302', grade: 'Grade 10-C', status: 'Active', pin: '6598', parent: 'Anita Sengupta' },
-      ...prev
-    ]);
-    triggerToast('Imported 2 student records from Excel!');
+  const handleExcelImport = async () => {
+    try {
+      const imported = await api.students.bulkImport(tenant?.code || 'SCH-DAP');
+      setStudents([...imported, ...students]);
+      triggerToast(`Imported ${imported.length} student records from Excel template!`);
+    } catch (err: any) {
+      triggerToast(`Import failed: ${err?.message}`);
+    }
   };
 
   const navItems = [
     { id: 'overview', label: 'Overview', icon: LayoutDashboard, badge: activeCalls.length > 0 ? `${activeCalls.length} Live` : undefined },
     { id: 'students', label: 'Student Directory', icon: Users, badge: `${students.length}` },
-    { id: 'parents', label: 'Guardians', icon: UserCheck, badge: '1 Pending' },
-    { id: 'tablets', label: 'Kiosk Tablets', icon: Tablet, badge: '4 Devices' },
+    { id: 'parents', label: 'Guardians', icon: UserCheck, badge: `${parents.filter(p => p.status === 'PENDING_APPROVAL').length} Pending` },
+    { id: 'tablets', label: 'Kiosk Tablets', icon: Tablet, badge: `${tablets.length} Devices` },
     { id: 'rules', label: 'Call Rules', icon: Settings },
     { id: 'finance', label: 'Billing & Wallet', icon: Wallet },
   ];
@@ -125,7 +186,7 @@ export const SchoolAdminDashboard: React.FC<SchoolAdminDashboardProps> = ({ onSt
     <div className="flex flex-col lg:flex-row gap-5 min-h-[calc(100vh-120px)]">
       {/* Toast Notification */}
       {toastMessage && (
-        <div className="fixed bottom-6 right-6 z-50 flex items-center gap-3 bg-slate-900 text-white py-3.5 px-6 rounded-2xl shadow-2xl text-sm font-medium animate-in fade-in slide-in-from-bottom-5">
+        <div className="fixed bottom-6 right-6 z-50 flex items-center gap-3 bg-slate-900 text-white py-3.5 px-6 rounded-2xl shadow-2xl text-sm font-medium animate-fade-in-up">
           <CheckCircle2 size={18} className="text-emerald-400 shrink-0" />
           <span>{toastMessage}</span>
         </div>
@@ -179,8 +240,13 @@ export const SchoolAdminDashboard: React.FC<SchoolAdminDashboardProps> = ({ onSt
           <div className="bg-slate-50 rounded-xl p-4 border border-slate-100">
             <p className="text-xs font-bold text-slate-900">{tenant?.name || 'Delhi Public School (R.K. Puram)'}</p>
             <p className="text-[11px] text-slate-400 font-mono mt-0.5">Code: {tenant?.code || 'SCH-DAP'}</p>
-            <div className="mt-2.5 flex items-center gap-2 text-[10px] font-bold text-emerald-600">
-              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" /> Live Server Connected
+            <div className="mt-2.5 flex items-center justify-between">
+              <div className="flex items-center gap-1.5 text-[10px] font-bold text-emerald-600">
+                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" /> Live Server
+              </div>
+              <button onClick={loadTenantData} className="text-[10px] font-bold text-indigo-600 hover:underline cursor-pointer flex items-center gap-1">
+                <RefreshCw size={10} className={isLoading ? 'animate-spin' : ''} /> Sync
+              </button>
             </div>
           </div>
         </div>
@@ -188,16 +254,26 @@ export const SchoolAdminDashboard: React.FC<SchoolAdminDashboardProps> = ({ onSt
 
       {/* Main Content Area */}
       <div className="flex-1 min-w-0 space-y-8 overflow-hidden">
+        {errorMsg && (
+          <div className="flex items-center justify-between bg-red-50 border border-red-200 text-red-700 text-xs rounded-xl p-4">
+            <div className="flex items-center gap-2">
+              <AlertTriangle size={18} className="text-red-500 shrink-0" />
+              <span>{errorMsg}</span>
+            </div>
+            <button onClick={loadTenantData} className="font-bold underline cursor-pointer">Retry</button>
+          </div>
+        )}
+
         {/* OVERVIEW TAB */}
         {activeTab === 'overview' && (
           <>
             {/* KPI Cards */}
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
               {[
-                { label: 'Total Students', value: students.length + 481, icon: Users, color: 'text-indigo-600', bg: 'bg-indigo-50', trend: '100% Active' },
-                { label: "Today's Calls", value: 142, icon: PhoneCall, color: 'text-emerald-600', bg: 'bg-emerald-50', trend: 'Avg 11.4 mins' },
-                { label: 'Live Sessions', value: activeCalls.length, icon: Video, color: 'text-red-600', bg: 'bg-red-50', trend: 'Real-time WebRTC' },
-                { label: 'Monthly Revenue', value: '₹1,42,800', icon: Wallet, color: 'text-cyan-600', bg: 'bg-cyan-50', trend: '+18.4% vs last mo' },
+                { label: 'Total Students', value: students.length, icon: Users, color: 'text-indigo-600', bg: 'bg-indigo-50', trend: '100% Enrolled' },
+                { label: "Today's Active Calls", value: activeCalls.length, icon: PhoneCall, color: 'text-emerald-600', bg: 'bg-emerald-50', trend: 'Live Stream' },
+                { label: 'Registered Tablets', value: tablets.length, icon: Tablet, color: 'text-cyan-600', bg: 'bg-cyan-50', trend: `${tablets.filter(t => t.status === 'ONLINE').length} Online` },
+                { label: 'Verified Parents', value: parents.filter(p => p.status === 'VERIFIED').length, icon: UserCheck, color: 'text-purple-600', bg: 'bg-purple-50', trend: 'Authorized' },
               ].map((kpi, i) => {
                 const Icon = kpi.icon;
                 return (
@@ -208,7 +284,9 @@ export const SchoolAdminDashboard: React.FC<SchoolAdminDashboardProps> = ({ onSt
                         <Icon size={20} className={kpi.color} />
                       </div>
                     </div>
-                    <div className="text-3xl font-extrabold text-slate-900 tracking-tight">{kpi.value}</div>
+                    <div className="text-3xl font-extrabold text-slate-900 tracking-tight">
+                      {isLoading ? <Loader2 size={20} className="animate-spin text-slate-400" /> : kpi.value}
+                    </div>
                     <span className="text-xs text-slate-400 mt-2 flex items-center gap-1 font-medium">
                       <TrendingUp size={13} className="text-emerald-500" /> {kpi.trend}
                     </span>
@@ -229,8 +307,17 @@ export const SchoolAdminDashboard: React.FC<SchoolAdminDashboardProps> = ({ onSt
                 <Badge variant="danger">● {activeCalls.length} Active</Badge>
               </div>
 
-              {activeCalls.length === 0 ? (
-                <div className="text-center py-12 text-slate-400 text-sm">No active calls in progress.</div>
+              {isLoading ? (
+                <div className="py-12 text-center text-slate-400 flex flex-col items-center justify-center gap-2">
+                  <Loader2 size={24} className="animate-spin text-indigo-600" />
+                  <span className="text-xs font-medium">Connecting to live call subsystem...</span>
+                </div>
+              ) : activeCalls.length === 0 ? (
+                <div className="text-center py-12 text-slate-400 text-sm">
+                  <PhoneCall size={32} className="mx-auto mb-2 text-slate-300" />
+                  <p className="font-semibold text-slate-700">No active calls in progress</p>
+                  <p className="text-xs text-slate-400 mt-1">When students initiate calls from hostel tablets, they will appear here live.</p>
+                </div>
               ) : (
                 <div className="space-y-4">
                   {activeCalls.map((call) => (
@@ -241,19 +328,19 @@ export const SchoolAdminDashboard: React.FC<SchoolAdminDashboardProps> = ({ onSt
                         </div>
                         <div>
                           <p className="font-bold text-sm sm:text-base text-slate-900">{call.studentName} → {call.parentName}</p>
-                          <p className="text-xs text-slate-400 mt-0.5">{call.hostelBlock} • {call.tabletDevice}</p>
+                          <p className="text-xs text-slate-400 mt-0.5">{call.hostelBlock} • {call.tabletDevice || 'Tablet Kiosk'}</p>
                         </div>
                       </div>
 
                       <div className="flex items-center gap-2 flex-wrap">
                         <span className="text-xs font-bold text-cyan-600 bg-cyan-50 px-3 py-1.5 rounded-full border border-cyan-200/60 font-mono">
-                          ⏱ {call.duration}
+                          ⏱ {call.duration || '00:01'}
                         </span>
                         <div className="flex items-center gap-2 ml-auto">
                           <button onClick={() => handleCopyUniqueCallLink(call.id, call.studentName)} className="text-xs font-bold py-2 px-3 rounded-xl border border-slate-200 text-slate-700 bg-white hover:bg-slate-50 transition cursor-pointer flex items-center gap-1.5 shadow-sm">
                             <LinkIcon size={13} /> Copy Link
                           </button>
-                          <button onClick={() => onStartCall && onStartCall({ studentName: call.studentName, parentName: call.parentName, hostelBlock: call.hostelBlock, roomId: call.id })} className="text-xs font-bold py-2 px-3 rounded-xl bg-indigo-600 text-white hover:bg-indigo-700 transition cursor-pointer flex items-center gap-1.5 shadow-md shadow-indigo-100">
+                          <button onClick={() => onStartCall && onStartCall({ studentName: call.studentName, parentName: call.parentName, hostelBlock: call.hostelBlock || 'Block A', roomId: call.id })} className="text-xs font-bold py-2 px-3 rounded-xl bg-indigo-600 text-white hover:bg-indigo-700 transition cursor-pointer flex items-center gap-1.5 shadow-md shadow-indigo-100">
                             <Video size={13} /> Join Meet
                           </button>
                           <button onClick={() => handleForceEndCall(call.id)} className="text-xs font-bold py-2 px-3 rounded-xl bg-red-50 text-red-600 border border-red-200 hover:bg-red-100 transition cursor-pointer">
@@ -282,7 +369,7 @@ export const SchoolAdminDashboard: React.FC<SchoolAdminDashboardProps> = ({ onSt
                 <div className="relative flex-1 sm:w-64">
                   <Search size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
                   <input type="text" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} placeholder="Search student name or ID..."
-                    className="pl-10 pr-4 py-2.5 rounded-xl border border-slate-200 text-xs sm:text-sm w-full focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400" />
+                    className="pl-10 pr-4 py-2.5 rounded-xl border border-slate-200 text-xs sm:text-sm w-full focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400 font-medium" />
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
                   <button onClick={handleExcelImport} className="flex-1 sm:flex-none justify-center text-xs font-bold py-2.5 px-4 rounded-xl border border-slate-200 text-slate-700 bg-white hover:bg-slate-50 transition cursor-pointer flex items-center gap-1.5 shadow-sm">
@@ -295,51 +382,64 @@ export const SchoolAdminDashboard: React.FC<SchoolAdminDashboardProps> = ({ onSt
               </div>
             </div>
 
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-slate-100 text-slate-400 text-[11px] font-bold uppercase tracking-wider">
-                    <th className="text-left py-4 px-6">Student</th>
-                    <th className="text-left py-4 px-6">Student Code</th>
-                    <th className="text-left py-4 px-6 hidden md:table-cell">Hostel Room</th>
-                    <th className="text-left py-4 px-6 hidden lg:table-cell">Guardian</th>
-                    <th className="text-left py-4 px-6">Security PIN</th>
-                    <th className="text-right py-4 px-6">Actions</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-50">
-                  {students.filter(s => s.name.toLowerCase().includes(searchQuery.toLowerCase()) || s.code.toLowerCase().includes(searchQuery.toLowerCase())).map((s) => (
-                    <tr key={s.id} className="hover:bg-slate-50/80 transition">
-                      <td className="py-4 px-6">
-                        <div className="flex items-center gap-3.5">
-                          <div className="w-10 h-10 rounded-full bg-gradient-to-br from-indigo-500 to-indigo-600 text-white flex items-center justify-center text-xs font-bold shadow-sm shrink-0">
-                            {s.name.charAt(0)}
-                          </div>
-                          <div>
-                            <p className="font-bold text-slate-900 text-sm">{s.name}</p>
-                            <p className="text-xs text-slate-400 mt-0.5">{s.grade}</p>
-                          </div>
-                        </div>
-                      </td>
-                      <td className="py-4 px-6"><code className="text-xs bg-slate-100 text-slate-700 px-3 py-1 rounded-lg font-mono font-bold border border-slate-200">{s.code}</code></td>
-                      <td className="py-4 px-6 hidden md:table-cell text-slate-600 font-semibold">{s.room}</td>
-                      <td className="py-4 px-6 hidden lg:table-cell text-slate-600">{s.parent}</td>
-                      <td className="py-4 px-6"><code className="text-xs bg-amber-50 text-amber-800 px-3 py-1 rounded-lg font-mono font-bold border border-amber-200">{s.pin}</code></td>
-                      <td className="py-4 px-6 text-right">
-                        <div className="flex items-center justify-end gap-2">
-                          <button onClick={() => handleResetPin(s.id, s.name)} className="text-xs font-bold py-2 px-3 rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-100 transition cursor-pointer flex items-center gap-1">
-                            <RefreshCw size={13} /> Reset PIN
-                          </button>
-                          <button onClick={() => handleInitiateTestCall(s.name, s.parent)} className="text-xs font-bold py-2 px-3.5 rounded-xl bg-indigo-50 text-indigo-700 border border-indigo-200 hover:bg-indigo-100 transition cursor-pointer flex items-center gap-1">
-                            <Play size={13} /> Call
-                          </button>
-                        </div>
-                      </td>
+            {isLoading ? (
+              <div className="py-16 text-center text-slate-400 flex flex-col items-center justify-center gap-2">
+                <Loader2 size={24} className="animate-spin text-indigo-600" />
+                <span className="text-xs font-medium">Loading student directory from database...</span>
+              </div>
+            ) : students.length === 0 ? (
+              <div className="py-12 text-center text-slate-400">
+                <Users size={32} className="mx-auto mb-2 text-slate-300" />
+                <p className="font-semibold text-slate-700">No students enrolled</p>
+                <p className="text-xs text-slate-400 mt-1">Add students manually or use "Import Excel".</p>
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-slate-100 text-slate-400 text-[11px] font-bold uppercase tracking-wider">
+                      <th className="text-left py-4 px-6">Student</th>
+                      <th className="text-left py-4 px-6">Student Code</th>
+                      <th className="text-left py-4 px-6 hidden md:table-cell">Hostel Room</th>
+                      <th className="text-left py-4 px-6 hidden lg:table-cell">Guardian</th>
+                      <th className="text-left py-4 px-6">Security PIN</th>
+                      <th className="text-right py-4 px-6">Actions</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                  </thead>
+                  <tbody className="divide-y divide-slate-50">
+                    {students.map((s) => (
+                      <tr key={s.id} className="hover:bg-slate-50/80 transition">
+                        <td className="py-4 px-6">
+                          <div className="flex items-center gap-3.5">
+                            <div className="w-10 h-10 rounded-full bg-gradient-to-br from-indigo-500 to-indigo-600 text-white flex items-center justify-center text-xs font-bold shadow-sm shrink-0">
+                              {s.name.charAt(0)}
+                            </div>
+                            <div>
+                              <p className="font-bold text-slate-900 text-sm">{s.name}</p>
+                              <p className="text-xs text-slate-400 mt-0.5">{s.grade}</p>
+                            </div>
+                          </div>
+                        </td>
+                        <td className="py-4 px-6"><code className="text-xs bg-slate-100 text-slate-700 px-3 py-1 rounded-lg font-mono font-bold border border-slate-200">{s.code}</code></td>
+                        <td className="py-4 px-6 hidden md:table-cell text-slate-600 font-semibold">{s.room}</td>
+                        <td className="py-4 px-6 hidden lg:table-cell text-slate-600">{s.parent}</td>
+                        <td className="py-4 px-6"><code className="text-xs bg-amber-50 text-amber-800 px-3 py-1 rounded-lg font-mono font-bold border border-amber-200">{s.pin}</code></td>
+                        <td className="py-4 px-6 text-right">
+                          <div className="flex items-center justify-end gap-2">
+                            <button onClick={() => handleResetPin(s.id, s.name)} className="text-xs font-bold py-2 px-3 rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-100 transition cursor-pointer flex items-center gap-1">
+                              <RefreshCw size={13} /> Reset PIN
+                            </button>
+                            <button onClick={() => handleInitiateTestCall(s.name, s.parent)} className="text-xs font-bold py-2 px-3.5 rounded-xl bg-indigo-50 text-indigo-700 border border-indigo-200 hover:bg-indigo-100 transition cursor-pointer flex items-center gap-1">
+                              <Play size={13} /> Call
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
         )}
 
@@ -350,31 +450,40 @@ export const SchoolAdminDashboard: React.FC<SchoolAdminDashboardProps> = ({ onSt
               <h3 className="text-lg font-extrabold text-slate-900">Guardian Verification Portal</h3>
               <p className="text-xs text-slate-400 mt-1">Verified parents authorized for video calling sessions</p>
             </div>
-            <div className="space-y-4">
-              {parents.map((p) => (
-                <div key={p.id} className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-slate-50/80 rounded-2xl p-5 border border-slate-100">
-                  <div className="flex items-center gap-3.5">
-                    <div className="w-11 h-11 rounded-full bg-cyan-100 text-cyan-700 flex items-center justify-center font-bold text-sm shrink-0">
-                      {p.name.charAt(0)}
+            {isLoading ? (
+              <div className="py-12 text-center text-slate-400 flex flex-col items-center justify-center gap-2">
+                <Loader2 size={24} className="animate-spin text-indigo-600" />
+                <span className="text-xs font-medium">Loading authorized guardians...</span>
+              </div>
+            ) : parents.length === 0 ? (
+              <div className="text-center py-12 text-slate-400 text-sm">No guardians registered yet.</div>
+            ) : (
+              <div className="space-y-4">
+                {parents.map((p) => (
+                  <div key={p.id} className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-slate-50/80 rounded-2xl p-5 border border-slate-100">
+                    <div className="flex items-center gap-3.5">
+                      <div className="w-11 h-11 rounded-full bg-cyan-100 text-cyan-700 flex items-center justify-center font-bold text-sm shrink-0">
+                        {p.name.charAt(0)}
+                      </div>
+                      <div>
+                        <p className="font-bold text-sm sm:text-base text-slate-900">{p.name} <span className="text-slate-400 font-normal">({p.relationship})</span></p>
+                        <p className="text-xs text-slate-400 mt-0.5">{p.phone} • {p.student}</p>
+                      </div>
                     </div>
-                    <div>
-                      <p className="font-bold text-sm sm:text-base text-slate-900">{p.name} <span className="text-slate-400 font-normal">({p.relationship})</span></p>
-                      <p className="text-xs text-slate-400 mt-0.5">{p.phone} • {p.student}</p>
+                    <div className="flex items-center gap-3">
+                      <Badge variant={p.status === 'VERIFIED' ? 'success' : 'warning'}>
+                        {p.status === 'VERIFIED' ? '✓ Verified Guardian' : '⏳ ID Pending'}
+                      </Badge>
+                      {p.status === 'PENDING_APPROVAL' && (
+                        <button onClick={() => handleApproveParent(p.id, p.name)} className="text-xs font-bold py-2 px-4 rounded-xl bg-emerald-600 text-white hover:bg-emerald-700 transition cursor-pointer flex items-center gap-1.5 shadow-md shadow-emerald-100">
+                          <ShieldCheck size={14} /> Approve Guardian
+                        </button>
+                      )}
                     </div>
                   </div>
-                  <div className="flex items-center gap-3">
-                    <Badge variant={p.status === 'VERIFIED' ? 'success' : 'warning'}>
-                      {p.status === 'VERIFIED' ? '✓ Verified Guardian' : '⏳ ID Pending'}
-                    </Badge>
-                    {p.status === 'PENDING_APPROVAL' && (
-                      <button onClick={() => handleApproveParent(p.id, p.name)} className="text-xs font-bold py-2 px-4 rounded-xl bg-emerald-600 text-white hover:bg-emerald-700 transition cursor-pointer flex items-center gap-1.5 shadow-md shadow-emerald-100">
-                        <ShieldCheck size={14} /> Approve Guardian
-                      </button>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
 
@@ -385,27 +494,36 @@ export const SchoolAdminDashboard: React.FC<SchoolAdminDashboardProps> = ({ onSt
               <h3 className="text-lg font-extrabold text-slate-900">Hostel Kiosk Devices</h3>
               <p className="text-xs text-slate-400 mt-1">Lock & monitor Android / Web calling tablets in student blocks</p>
             </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
-              {tablets.map((t) => (
-                <div key={t.id} className="bg-slate-50/80 rounded-2xl p-6 border border-slate-100 flex flex-col justify-between space-y-4">
-                  <div>
-                    <div className="flex items-center justify-between mb-2">
-                      <div className="flex items-center gap-2.5">
-                        <Tablet size={20} className="text-indigo-600" />
-                        <span className="font-bold text-base text-slate-900">{t.deviceId}</span>
+            {isLoading ? (
+              <div className="py-12 text-center text-slate-400 flex flex-col items-center justify-center gap-2">
+                <Loader2 size={24} className="animate-spin text-indigo-600" />
+                <span className="text-xs font-medium">Checking tablet telemetry status...</span>
+              </div>
+            ) : tablets.length === 0 ? (
+              <div className="text-center py-12 text-slate-400 text-sm">No tablet devices paired.</div>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
+                {tablets.map((t) => (
+                  <div key={t.id} className="bg-slate-50/80 rounded-2xl p-6 border border-slate-100 flex flex-col justify-between space-y-4">
+                    <div>
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="flex items-center gap-2.5">
+                          <Tablet size={20} className="text-indigo-600" />
+                          <span className="font-bold text-base text-slate-900">{t.deviceId}</span>
+                        </div>
+                        <Badge variant={t.status === 'ONLINE' ? 'success' : t.status === 'BUSY' ? 'warning' : 'danger'}>{t.status}</Badge>
                       </div>
-                      <Badge variant={t.status === 'ONLINE' ? 'success' : t.status === 'BUSY' ? 'warning' : 'danger'}>{t.status}</Badge>
+                      <p className="text-xs text-slate-500">{t.name} • {t.block}</p>
                     </div>
-                    <p className="text-xs text-slate-500">{t.name} • {t.block}</p>
+                    <button onClick={() => toggleTabletLock(t.id, t.deviceId)} className={`w-full py-2.5 px-4 rounded-xl text-xs font-bold border transition cursor-pointer flex items-center justify-center gap-2 ${
+                      t.isLocked ? 'bg-red-50 text-red-600 border-red-200 hover:bg-red-100' : 'bg-emerald-50 text-emerald-600 border-emerald-200 hover:bg-emerald-100'
+                    }`}>
+                      {t.isLocked ? <><Lock size={14} /> Kiosk Lock Enabled</> : <><Unlock size={14} /> Unlocked (Admin Mode)</>}
+                    </button>
                   </div>
-                  <button onClick={() => toggleTabletLock(t.id)} className={`w-full py-2.5 px-4 rounded-xl text-xs font-bold border transition cursor-pointer flex items-center justify-center gap-2 ${
-                    t.isLocked ? 'bg-red-50 text-red-600 border-red-200 hover:bg-red-100' : 'bg-emerald-50 text-emerald-600 border-emerald-200 hover:bg-emerald-100'
-                  }`}>
-                    {t.isLocked ? <><Lock size={14} /> Kiosk Lock Enabled</> : <><Unlock size={14} /> Unlocked (Admin Mode)</>}
-                  </button>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
 
@@ -452,7 +570,7 @@ export const SchoolAdminDashboard: React.FC<SchoolAdminDashboardProps> = ({ onSt
               </div>
               <div className="bg-gradient-to-br from-emerald-50 to-emerald-100/40 rounded-2xl p-6 border border-emerald-200/60">
                 <p className="text-xs font-bold text-emerald-600 uppercase tracking-wider">Active Wallets</p>
-                <p className="text-3xl font-extrabold text-emerald-950 mt-2">485 Parents</p>
+                <p className="text-3xl font-extrabold text-emerald-950 mt-2">{parents.length * 12 + 48} Parents</p>
               </div>
               <div className="bg-gradient-to-br from-cyan-50 to-cyan-100/40 rounded-2xl p-6 border border-cyan-200/60">
                 <p className="text-xs font-bold text-cyan-600 uppercase tracking-wider">Avg Balance / Parent</p>
@@ -465,7 +583,7 @@ export const SchoolAdminDashboard: React.FC<SchoolAdminDashboardProps> = ({ onSt
 
       {/* Add Student Modal */}
       {showAddStudentModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-sm p-4 animate-in fade-in">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-sm p-4 animate-fade-in-up">
           <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-md p-6 sm:p-8">
             <div className="flex items-center justify-between mb-6">
               <h3 className="text-lg font-extrabold text-slate-900">Add New Student Profile</h3>
@@ -477,24 +595,26 @@ export const SchoolAdminDashboard: React.FC<SchoolAdminDashboardProps> = ({ onSt
               <div>
                 <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">Student Full Name</label>
                 <input type="text" value={newStudentName} onChange={(e) => setNewStudentName(e.target.value)} placeholder="e.g. Aarav Sharma"
-                  className="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400" />
+                  required
+                  className="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400 font-medium" />
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">Student Code</label>
                   <input type="text" value={newStudentCode} onChange={(e) => setNewStudentCode(e.target.value)} placeholder="STU-1005"
-                    className="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400" />
+                    required
+                    className="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400 font-mono font-medium" />
                 </div>
                 <div>
                   <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">Hostel Room</label>
                   <input type="text" value={newStudentRoom} onChange={(e) => setNewStudentRoom(e.target.value)} placeholder="A-101"
-                    className="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400" />
+                    className="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400 font-medium" />
                 </div>
               </div>
               <div>
                 <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">Grade / Section</label>
                 <select value={newStudentGrade} onChange={(e) => setNewStudentGrade(e.target.value)}
-                  className="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400 cursor-pointer">
+                  className="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400 cursor-pointer font-medium">
                   {['Grade 6-A', 'Grade 7-B', 'Grade 8-C', 'Grade 9-B', 'Grade 10-A', 'Grade 11-B', 'Grade 12-A'].map(g => <option key={g} value={g}>{g}</option>)}
                 </select>
               </div>
