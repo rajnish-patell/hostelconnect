@@ -323,39 +323,40 @@ export const GoogleMeetRoom: React.FC<GoogleMeetRoomProps> = ({
     }}>
       {/* ─── Top Header ─── */}
       <div style={{
-        height: '56px', padding: '0 20px', display: 'flex', alignItems: 'center',
+        minHeight: '56px', padding: isMobile ? '8px 12px' : '0 20px', display: 'flex', alignItems: 'center',
         justifyContent: 'space-between', background: '#1e1e1e', borderBottom: '1px solid #3c4043',
+        flexWrap: isMobile ? 'wrap' : 'nowrap', gap: '8px',
       }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-          <span style={{ fontSize: '1rem', fontWeight: 600 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+          <span style={{ fontSize: isMobile ? '0.85rem' : '1rem', fontWeight: 600 }}>
             {localDisplayName} ➔ {remoteDisplayName}
           </span>
           <StatusBadge />
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: isMobile ? '8px' : '16px', flexWrap: 'wrap' }}>
           {/* Wallet */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', background: '#3c4043', padding: '4px 12px', borderRadius: '20px', fontSize: '0.8rem' }}>
-            <Wallet size={14} color="#38bdf8" />
-            <span style={{ color: '#bdc1c6' }}>Wallet:</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '4px', background: '#3c4043', padding: '4px 8px', borderRadius: '20px', fontSize: '0.75rem' }}>
+            <Wallet size={12} color="#38bdf8" />
+            <span style={{ color: '#bdc1c6', display: isMobile ? 'none' : 'inline' }}>Wallet:</span>
             <span style={{ fontWeight: 700, color: '#38bdf8' }}>₹{walletBalance.toFixed(2)}</span>
-            <span style={{ color: '#9aa0a6', fontSize: '0.7rem' }}>(₹2/min)</span>
+            <span style={{ color: '#9aa0a6', fontSize: '0.65rem' }}>(₹2/m)</span>
           </div>
 
           {/* Timer */}
           <div style={{
-            display: 'flex', alignItems: 'center', gap: '6px',
+            display: 'flex', alignItems: 'center', gap: '4px',
             background: secondsRemaining < 180 ? 'rgba(239,68,68,0.3)' : '#3c4043',
-            padding: '4px 12px', borderRadius: '20px', fontSize: '0.8rem',
+            padding: '4px 8px', borderRadius: '20px', fontSize: '0.75rem',
             border: secondsRemaining < 180 ? '1px solid #ef4444' : 'none',
           }}>
-            <Clock size={14} color={secondsRemaining < 180 ? '#f87171' : '#f59e0b'} />
+            <Clock size={12} color={secondsRemaining < 180 ? '#f87171' : '#f59e0b'} />
             <span style={{ fontWeight: 700, color: secondsRemaining < 180 ? '#f87171' : '#f59e0b' }}>
               {formatTimer(secondsRemaining)}
             </span>
           </div>
 
-          {showMetricsHud && connectionStatus === 'connected' && (
+          {!isMobile && showMetricsHud && connectionStatus === 'connected' && (
             <div style={{ display: 'flex', alignItems: 'center', gap: '12px', fontSize: '0.75rem', color: '#9aa0a6' }}>
               <span>Bitrate: <strong style={{ color: '#38bdf8' }}>{bitrate}kbps</strong></span>
               <span>Loss: <strong style={{ color: '#a78bfa' }}>{packetLoss}%</strong></span>

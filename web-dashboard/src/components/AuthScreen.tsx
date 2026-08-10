@@ -145,15 +145,18 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
   // Mask recipient contact for security
   const maskContact = (str: string) => {
     if (!str) return '';
-    if (str.includes('@')) {
-      const [user, domain] = str.split('@');
+    const clean = str.trim();
+    if (clean.includes('@')) {
+      const parts = clean.split('@');
+      const user = parts[0];
+      const domain = parts[1] ? parts[1].split(' ')[0] : 'domain.com';
       const maskedUser = user.length > 3 ? user.slice(0, 2) + '****' + user.slice(-2) : user + '***';
       return `${maskedUser}@${domain}`;
     }
-    if (str.length > 7) {
-      return str.slice(0, 4) + ' **** ' + str.slice(-2);
+    if (clean.length > 7) {
+      return clean.slice(0, 4) + ' **** ' + clean.slice(-2);
     }
-    return str.slice(0, 2) + '***' + str.slice(-1);
+    return clean.slice(0, 2) + '***' + clean.slice(-1);
   };
 
   // Open forgot password modal

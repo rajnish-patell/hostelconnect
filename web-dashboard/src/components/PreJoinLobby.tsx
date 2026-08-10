@@ -46,8 +46,73 @@ export const PreJoinLobby: React.FC<PreJoinLobbyProps> = ({ roomName, displayNam
 
       setupAudioMeter(stream);
     } catch (err) {
-      console.warn('Media permission error:', err);
+      console.warn('Media permission error (falling back to synthetic demo stream option):', err);
       setPermissionState('denied');
+    }
+  };
+
+  const createSyntheticMediaStream = () => {
+    try {
+      const canvas = document.createElement('canvas');
+      canvas.width = 640;
+      canvas.height = 480;
+      const ctx = canvas.getContext('2d');
+
+      let frame = 0;
+      const draw = () => {
+        if (!ctx) return;
+        frame++;
+        const grad = ctx.createLinearGradient(0, 0, 640, 480);
+        grad.addColorStop(0, '#1e1b4b');
+        grad.addColorStop(1, '#0e7490');
+        ctx.fillStyle = grad;
+        ctx.fillRect(0, 0, 640, 480);
+
+        // Pulsing avatar circle
+        ctx.beginPath();
+        ctx.arc(320, 210, 65 + Math.sin(frame * 0.08) * 6, 0, Math.PI * 2);
+        ctx.fillStyle = '#4f46e5';
+        ctx.fill();
+
+        // Initial
+        ctx.fillStyle = '#ffffff';
+        ctx.font = 'bold 50px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(displayName.charAt(0).toUpperCase() || 'U', 320, 210);
+
+        // Name Subtitle
+        ctx.font = 'bold 20px sans-serif';
+        ctx.fillText(displayName, 320, 310);
+        ctx.font = '14px sans-serif';
+        ctx.fillStyle = '#a5f3fc';
+        ctx.fillText('Encrypted WebRTC Demo Stream', 320, 340);
+      };
+
+      const timer = setInterval(draw, 50);
+      draw();
+
+      const videoStream = canvas.captureStream(30);
+      const videoTrack = videoStream.getVideoTracks()[0];
+
+      // Audio track (silent oscillator fallback)
+      const audioCtx = new AudioContext();
+      const osc = audioCtx.createOscillator();
+      const dst = audioCtx.createMediaStreamDestination();
+      const gain = audioCtx.createGain();
+      gain.gain.value = 0.001;
+      osc.connect(gain);
+      gain.connect(dst);
+      osc.start();
+
+      const audioTrack = dst.stream.getAudioTracks()[0];
+      const combined = new MediaStream([videoTrack, audioTrack]);
+
+      setLocalStream(combined);
+      setPermissionState('granted');
+      if (videoRef.current) videoRef.current.srcObject = combined;
+    } catch (e) {
+      console.error('Failed to create synthetic stream:', e);
     }
   };
 
@@ -212,18 +277,27 @@ export const PreJoinLobby: React.FC<PreJoinLobbyProps> = ({ roomName, displayNam
             </div>
 
             {permissionState === 'denied' && (
-              <div className="bg-red-50 border border-red-200 text-red-700 text-xs rounded-xl p-3.5 mb-6 space-y-2">
+              <div className="bg-red-50 border border-red-200 text-red-700 text-xs rounded-xl p-3.5 mb-6 space-y-2.5">
                 <p className="flex items-center gap-1.5 font-semibold">
                   <AlertTriangle size={14} className="shrink-0" /> Camera & Mic Access Needed
                 </p>
-                <p className="text-red-600">Please allow browser permissions for video and audio.</p>
-                <button
-                  type="button"
-                  onClick={() => initMedia()}
-                  className="w-full py-2 bg-white border border-red-300 rounded-lg text-red-700 font-semibold flex items-center justify-center gap-1 hover:bg-red-50 transition"
-                >
-                  <RefreshCw size={12} /> Retry Permission Check
-                </button>
+                <p className="text-red-600">Please allow browser permissions or use the demo stream for testing.</p>
+                <div className="flex flex-col gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => initMedia()}
+                    className="w-full py-2 bg-white border border-red-300 rounded-lg text-red-700 font-semibold flex items-center justify-center gap-1.5 hover:bg-red-50 transition cursor-pointer"
+                  >
+                    <RefreshCw size={12} /> Retry Permission Check
+                  </button>
+                  <button
+                    type="button"
+                    onClick={createSyntheticMediaStream}
+                    className="w-full py-2 bg-gradient-to-r from-indigo-600 to-indigo-700 text-white rounded-lg font-bold flex items-center justify-center gap-1.5 hover:from-indigo-700 hover:to-indigo-800 transition cursor-pointer shadow-sm"
+                  >
+                    <Camera size={12} /> Use Demo Video Stream →
+                  </button>
+                </div>
               </div>
             )}
           </div>
