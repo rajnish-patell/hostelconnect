@@ -1,0 +1,56 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hostelconnect-api
+  namespace: default
+  labels:
+    app: hostelconnect-api
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: hostelconnect-api
+  template:
+    metadata:
+      labels:
+        app: hostelconnect-api
+    spec:
+      containers:
+        - name: api
+          image: hostelconnect/api:latest
+          ports:
+            - containerPort: 4000
+          env:
+            - name: NODE_ENV
+              value: "production"
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: hostelconnect-secrets
+                  key: DATABASE_URL
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "250m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+          readinessProbe:
+            httpGet:
+              path: /api/v1/health
+              port: 4000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: hostelconnect-api-service
+spec:
+  selector:
+    app: hostelconnect-api
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 4000
+  type: ClusterIP

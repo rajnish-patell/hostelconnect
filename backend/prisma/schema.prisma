@@ -1,0 +1,300 @@
+// Prisma Schema for HostelConnect (Multi-Tenant Boarding School Video Calling Platform)
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  SUPER_ADMIN
+  SCHOOL_ADMIN
+  HOSTEL_WARDEN
+  STUDENT
+  PARENT
+  GUARDIAN
+  FINANCE_MANAGER
+  SUPPORT_AGENT
+}
+
+enum Relationship {
+  FATHER
+  MOTHER
+  GUARDIAN
+  OTHER
+}
+
+enum DeviceStatus {
+  ONLINE
+  OFFLINE
+  BUSY
+  MAINTENANCE
+  LOCKED
+}
+
+enum CallStatus {
+  RINGING
+  CONNECTED
+  COMPLETED
+  MISSED
+  REJECTED
+  TIMEOUT
+  CANCELLED
+}
+
+enum PaymentStatus {
+  PENDING
+  SUCCESS
+  FAILED
+  REFUNDED
+}
+
+enum PaymentGateway {
+  RAZORPAY
+  STRIPE
+  CASH
+}
+
+model School {
+  id                String         @id @default(uuid())
+  code              String         @unique
+  name              String
+  logoUrl           String?
+  address           String?
+  contactPhone      String?
+  contactEmail      String?
+  subscriptionPlan  String         @default("PRO_MONTHLY")
+  isActive          Boolean        @default(true)
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+
+  users             User[]
+  students          Student[]
+  tablets           HostelTablet[]
+  callRules         CallRule[]
+  calls             Call[]
+  auditLogs         AuditLog[]
+
+  @@map("schools")
+}
+
+model User {
+  id            String     @id @default(uuid())
+  schoolId      String?
+  school        School?    @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  fullName      String
+  email         String     @unique
+  phoneNumber   String     @unique
+  passwordHash  String
+  role          Role       @default(PARENT)
+  isVerified    Boolean    @default(false)
+  avatarUrl     String?
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+
+  student       Student?
+  parent        Parent?
+  wallet        Wallet?
+  auditLogs     AuditLog[]
+
+  @@index([schoolId])
+  @@map("users")
+}
+
+model Student {
+  id             String          @id @default(uuid())
+  schoolId       String
+  school         School          @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  userId         String          @unique
+  user           User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  studentCode    String          @unique
+  pinHash        String
+  qrCodeHash     String?         @unique
+  faceVector     String?
+  hostelBlock    String?
+  roomNumber     String?
+  grade          String?
+  isActive       Boolean         @default(true)
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+
+  parents        StudentParent[]
+  calls          Call[]
+
+  @@index([schoolId])
+  @@map("students")
+}
+
+model Parent {
+  id           String          @id @default(uuid())
+  userId       String          @unique
+  user         User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  relationship Relationship    @default(FATHER)
+  address      String?
+  idProofUrl   String?
+  isApproved   Boolean         @default(true)
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+
+  students     StudentParent[]
+  calls        Call[]
+
+  @@map("parents")
+}
+
+model StudentParent {
+  id                 String   @id @default(uuid())
+  studentId          String
+  student            Student  @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  parentId           String
+  parent             Parent   @relation(fields: [parentId], references: [id], onDelete: Cascade)
+  isPrimaryGuardian  Boolean  @default(false)
+  callingAllowed     Boolean  @default(true)
+  createdAt          DateTime @default(now())
+
+  @@unique([studentId, parentId])
+  @@map("student_parents")
+}
+
+model HostelTablet {
+  id             String       @id @default(uuid())
+  schoolId       String
+  school         School       @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  deviceId       String       @unique
+  deviceName     String
+  hostelBlock    String?
+  isLockedKiosk  Boolean      @default(true)
+  fcmToken       String?
+  status         DeviceStatus @default(OFFLINE)
+  lastPingAt     DateTime?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  calls          Call[]
+
+  @@index([schoolId])
+  @@map("hostel_tablets")
+}
+
+model CallRule {
+  id                 String   @id @default(uuid())
+  schoolId           String   @unique
+  school             School   @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  allowedDays        Json     // e.g. ["MON", "WED", "SAT", "SUN"]
+  startTime          String   @default("17:00") // 24hr format
+  endTime            String   @default("20:00")
+  maxDurationMinutes Int      @default(15)
+  weeklyLimitCalls   Int      @default(3)
+  allowEmergency     Boolean  @default(true)
+  costPerMinute      Decimal  @default(2.00) @db.Decimal(10, 2)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@map("call_rules")
+}
+
+model Call {
+  id              String      @id @default(uuid())
+  schoolId        String
+  school          School      @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  studentId       String
+  student         Student     @relation(fields: [studentId], references: [id])
+  parentId        String
+  parent          Parent      @relation(fields: [parentId], references: [id])
+  tabletId        String?
+  tablet          HostelTablet? @relation(fields: [tabletId], references: [id])
+  roomName        String      @unique
+  status          CallStatus  @default(RINGING)
+  startedAt       DateTime?
+  endedAt         DateTime?
+  durationSeconds Int         @default(0)
+  costDeducted    Decimal     @default(0.00) @db.Decimal(10, 2)
+  qualityRating   Int?
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  log             CallLog?
+
+  @@index([schoolId])
+  @@index([studentId])
+  @@index([parentId])
+  @@map("calls")
+}
+
+model CallLog {
+  id               String   @id @default(uuid())
+  callId           String   @unique
+  call             Call     @relation(fields: [callId], references: [id], onDelete: Cascade)
+  livekitSessionId String?
+  qualityMetrics   Json?    // packet loss, jitter, audio/video bitrates
+  recordingUrl     String?
+  disconnectReason String?  // "MAX_DURATION", "WALLET_EXHAUSTED", "USER_HANGUP", "NETWORK_ERROR"
+  createdAt        DateTime @default(now())
+
+  @@map("call_logs")
+}
+
+model Wallet {
+  id            String        @id @default(uuid())
+  userId        String        @unique
+  user          User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  balance       Decimal       @default(0.00) @db.Decimal(10, 2)
+  currency      String        @default("INR")
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  payments      Payment[]
+  transactions  Transaction[]
+
+  @@map("wallets")
+}
+
+model Payment {
+  id               String         @id @default(uuid())
+  walletId         String
+  wallet           Wallet         @relation(fields: [walletId], references: [id], onDelete: Cascade)
+  gateway          PaymentGateway @default(RAZORPAY)
+  gatewayOrderId   String?        @unique
+  gatewayPaymentId String?        @unique
+  amount           Decimal        @db.Decimal(10, 2)
+  currency         String         @default("INR")
+  status           PaymentStatus  @default(PENDING)
+  invoiceUrl       String?
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+
+  @@map("payments")
+}
+
+model Transaction {
+  id          String   @id @default(uuid())
+  walletId    String
+  wallet      Wallet   @relation(fields: [walletId], references: [id], onDelete: Cascade)
+  amount      Decimal  @db.Decimal(10, 2)
+  type        String   // "CREDIT_RECHARGE", "DEBIT_CALL", "REFUND"
+  description String
+  referenceId String?
+  createdAt   DateTime @default(now())
+
+  @@map("transactions")
+}
+
+model AuditLog {
+  id        String   @id @default(uuid())
+  schoolId  String?
+  school    School?  @relation(fields: [schoolId], references: [id])
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id])
+  action    String
+  resource  String
+  metadata  Json?
+  ipAddress String?
+  createdAt DateTime @default(now())
+
+  @@index([schoolId])
+  @@index([userId])
+  @@map("audit_logs")
+}

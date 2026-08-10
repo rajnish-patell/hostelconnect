@@ -1,0 +1,79 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database Service
+  postgres:
+    image: postgres:16-alpine
+    container_name: hostelconnect-postgres
+    restart: always
+    environment:
+      POSTGRES_USER: hosteladmin
+      POSTGRES_PASSWORD: SecretPassword123!
+      POSTGRES_DB: hostelconnect_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hosteladmin -d hostelconnect_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis Cache & Pub/Sub
+  redis:
+    image: redis:7-alpine
+    container_name: hostelconnect-redis
+    restart: always
+    ports:
+      - "6379:6379"
+
+  # LiveKit WebRTC SFU Server
+  livekit:
+    image: livekit/livekit-server:latest
+    container_name: hostelconnect-livekit
+    restart: always
+    command: --config /etc/livekit.yaml
+    ports:
+      - "7880:7880"
+      - "7881:7881"
+      - "7882:7882/udp"
+    environment:
+      LIVEKIT_KEYS: "devkey: secretkeysecretkeysecretkeysecretkey"
+
+  # NestJS API & WebSockets Backend
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: hostelconnect-backend
+    restart: always
+    ports:
+      - "4000:4000"
+    environment:
+      DATABASE_URL: "postgresql://hosteladmin:SecretPassword123!@postgres:5432/hostelconnect_db?schema=public"
+      REDIS_HOST: "redis"
+      REDIS_PORT: "6379"
+      LIVEKIT_API_KEY: "devkey"
+      LIVEKIT_API_SECRET: "secretkeysecretkeysecretkeysecretkey"
+      PORT: "4000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+
+  # Web Admin Dashboard (React + Vite)
+  web-dashboard:
+    build:
+      context: ./web-dashboard
+      dockerfile: Dockerfile
+    container_name: hostelconnect-dashboard
+    restart: always
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
+
+volumes:
+  postgres_data:
