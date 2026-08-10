@@ -1,3 +1,5 @@
+declare const process: any;
+
 export default async function handler(req: any, res: any) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
@@ -10,10 +12,9 @@ export default async function handler(req: any, res: any) {
   }
 
   try {
-    const resendApiKey = process.env.RESEND_API_KEY;
+    const resendApiKey = typeof process !== 'undefined' ? process.env?.RESEND_API_KEY : undefined;
 
     if (resendApiKey) {
-      // Dispatch via Resend Email API
       const response = await fetch('https://api.resend.com/emails', {
         method: 'POST',
         headers: {
@@ -43,11 +44,10 @@ export default async function handler(req: any, res: any) {
       return res.status(200).json({ success: true, mode: 'live_resend', data });
     }
 
-    // Default Fallback when no external email SMTP key is configured in Vercel
     return res.status(200).json({
       success: true,
       mode: 'simulated_gateway',
-      message: 'OTP dispatched via on-screen security gateway notification toast.',
+      message: 'OTP dispatched via security token gateway.',
       refId,
     });
   } catch (error: any) {
