@@ -7,6 +7,7 @@ import api from '../api';
 import { setAuth } from '../utils/auth';
 import Button from '../components/ui/Button';
 import Input from '../components/ui/Input';
+import Modal from '../components/ui/Modal';
 import { validateEmail, validatePhone, validatePassword, validateText, validateOtp } from '../utils/validation';
 
 export default function Login() {
@@ -23,6 +24,15 @@ export default function Login() {
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [otpSent, setOtpSent] = useState(false);
+
+  // Dynamic Forgot Password Modal State
+  const [forgotModalOpen, setForgotModalOpen] = useState(false);
+  const [resetStep, setResetStep] = useState(1); // 1 = request token, 2 = confirm new password
+  const [resetIdentifier, setResetIdentifier] = useState(''); // email or school code
+  const [resetToken, setResetToken] = useState('');
+  const [newResetPassword, setNewResetPassword] = useState('');
+  const [resetLoading, setResetLoading] = useState(false);
+  const [resetError, setResetError] = useState('');
   const navigate = useNavigate();
 
   const handleChange = (e) => {
@@ -126,6 +136,63 @@ export default function Login() {
       }
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleRequestResetToken = async (e) => {
+    e.preventDefault();
+    if (!resetIdentifier.trim()) {
+      setResetError(role === 'superadmin' ? 'Please enter your email address' : 'Please enter your school code');
+      return;
+    }
+    setResetLoading(true);
+    setResetError('');
+    try {
+      const payload = role === 'superadmin' 
+        ? { role: 'superadmin', email: resetIdentifier.trim() }
+        : { role: 'school', schoolCode: resetIdentifier.trim() };
+      
+      const res = await api.post('/auth/password-reset/request', payload);
+      toast.success(res.data.message || 'Reset token generated');
+      if (res.data.resetToken) {
+        setResetToken(res.data.resetToken);
+      }
+      setResetStep(2);
+    } catch (err) {
+      setResetError(err.response?.data?.message || 'Failed to request password reset');
+    } finally {
+      setResetLoading(false);
+    }
+  };
+
+  const handleConfirmPasswordReset = async (e) => {
+    e.preventDefault();
+    if (!resetToken.trim() || !newResetPassword.trim()) {
+      setResetError('Reset token and new password are required');
+      return;
+    }
+    if (newResetPassword.length < 6) {
+      setResetError('New password must be at least 6 characters');
+      return;
+    }
+    setResetLoading(true);
+    setResetError('');
+    try {
+      const res = await api.post('/auth/password-reset/confirm', {
+        role: role === 'superadmin' ? 'superadmin' : 'school',
+        resetToken: resetToken.trim(),
+        newPassword: newResetPassword.trim(),
+      });
+      toast.success(res.data.message || 'Password reset successfully!');
+      setForgotModalOpen(false);
+      setResetStep(1);
+      setResetIdentifier('');
+      setResetToken('');
+      setNewResetPassword('');
+    } catch (err) {
+      setResetError(err.response?.data?.message || 'Password reset failed');
+    } finally {
+      setResetLoading(false);
     }
   };
 
@@ -390,6 +457,23 @@ export default function Login() {
               </motion.div>
             </AnimatePresence>
 
+            {(role === 'superadmin' || role === 'school') && (
+              <div className="flex justify-end pt-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setForgotModalOpen(true);
+                    setResetStep(1);
+                    setResetError('');
+                    setResetIdentifier(role === 'superadmin' ? form.email : form.schoolCode);
+                  }}
+                  className="text-xs font-semibold text-brand-600 hover:text-brand-700 hover:underline cursor-pointer"
+                >
+                  Forgot Password?
+                </button>
+              </div>
+            )}
+
             <Button
               type="submit"
               variant="primary"
@@ -409,6 +493,94 @@ export default function Login() {
           </div>
         </motion.div>
       </div>
+
+      {/* Dynamic Reset Password Modal */}
+      <Modal
+        isOpen={forgotModalOpen}
+        onClose={() => {
+          setForgotModalOpen(false);
+          setResetStep(1);
+          setResetError('');
+          setResetIdentifier('');
+          setResetToken('');
+          setNewResetPassword('');
+        }}
+        title={`Reset ${role === 'superadmin' ? 'Super Admin' : 'School'} Password`}
+        subtitle="Request reset token or dynamically update password"
+      >
+        {resetStep === 1 ? (
+          <form onSubmit={handleRequestResetToken} className="space-y-4">
+            {resetError && (
+              <div className="p-3 text-xs bg-red-50 text-red-600 border border-red-200 rounded-xl font-medium">
+                {resetError}
+              </div>
+            )}
+
+            <Input
+              label={role === 'superadmin' ? 'Super Admin Email' : 'School Code'}
+              type="text"
+              placeholder={role === 'superadmin' ? 'admin@hostelvideocall.com' : 'SCH001'}
+              value={resetIdentifier}
+              onChange={(e) => setResetIdentifier(e.target.value)}
+              required
+            />
+
+            <div className="flex items-center justify-end gap-2 pt-2">
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                onClick={() => setForgotModalOpen(false)}
+              >
+                Cancel
+              </Button>
+              <Button type="submit" variant="primary" size="sm" isLoading={resetLoading}>
+                Request Reset Token
+              </Button>
+            </div>
+          </form>
+        ) : (
+          <form onSubmit={handleConfirmPasswordReset} className="space-y-4">
+            {resetError && (
+              <div className="p-3 text-xs bg-red-50 text-red-600 border border-red-200 rounded-xl font-medium">
+                {resetError}
+              </div>
+            )}
+
+            <Input
+              label="Reset Token"
+              type="text"
+              placeholder="Paste reset token"
+              value={resetToken}
+              onChange={(e) => setResetToken(e.target.value)}
+              required
+            />
+
+            <Input
+              label="New Password"
+              type="password"
+              placeholder="Min. 6 characters"
+              value={newResetPassword}
+              onChange={(e) => setNewResetPassword(e.target.value)}
+              required
+            />
+
+            <div className="flex items-center justify-end gap-2 pt-2">
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                onClick={() => setResetStep(1)}
+              >
+                Back
+              </Button>
+              <Button type="submit" variant="primary" size="sm" isLoading={resetLoading}>
+                Set New Password
+              </Button>
+            </div>
+          </form>
+        )}
+      </Modal>
     </div>
   );
 }
