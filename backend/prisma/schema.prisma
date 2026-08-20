@@ -1,0 +1,193 @@
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "rhel-openssl-1.0.x", "rhel-openssl-3.0.x", "debian-openssl-1.1.x", "debian-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model SuperAdmin {
+  id           Int      @id @default(autoincrement())
+  name         String
+  email        String   @unique
+  passwordHash String   @map("password_hash")
+  phone        String?
+  isActive     Boolean  @default(true) @map("is_active")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  schools School[]
+
+  @@map("super_admins")
+}
+
+model School {
+  id                Int      @id @default(autoincrement())
+  schoolCode        String   @unique @map("school_code")
+  name              String
+  address           String?
+  contactPerson     String?  @map("contact_person")
+  contactPhone      String?  @map("contact_phone")
+  contactEmail      String?  @map("contact_email")
+  logoUrl           String?  @map("logo_url")
+  isActive          Boolean  @default(true) @map("is_active")
+  callDurationMins    Int      @default(10) @map("call_duration_mins")
+  minCallDurationMins Int      @default(5) @map("min_call_duration_mins")
+  maxCallDurationMins Int      @default(60) @map("max_call_duration_mins")
+  isUnlimitedCalls    Boolean  @default(false) @map("is_unlimited_calls")
+  perMinuteCharge     Float    @default(2.50) @map("per_minute_charge")
+  passwordHash        String?  @map("password_hash") // for school login
+  createdById         Int?     @map("created_by")
+  createdAt           DateTime @default(now()) @map("created_at")
+  updatedAt           DateTime @updatedAt @map("updated_at")
+
+  createdBy SuperAdmin? @relation(fields: [createdById], references: [id])
+  students  Student[]
+  calls     CallSession[]
+
+  @@map("schools")
+}
+
+model Student {
+  id               Int      @id @default(autoincrement())
+  schoolId         Int      @map("school_id")
+  studentId        String   @map("student_id") // login ID unique per school
+  name             String
+  classSection     String?  @map("class_section")
+  roomNo           String?  @map("room_no")
+  photoUrl         String?  @map("photo_url")
+  passwordHash     String?  @map("password_hash")
+  isActive         Boolean  @default(true) @map("is_active")
+  callDurationMins Int?     @map("call_duration_mins") // override
+  isUnlimitedCalls Boolean  @default(false) @map("is_unlimited_calls")
+  walletBalance    Float  @default(0) @map("wallet_balance")
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  school             School              @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  parents            StudentParent[]
+  calls              CallSession[]
+  recharges          Recharge[]
+  walletTransactions WalletTransaction[]
+
+  @@unique([schoolId, studentId])
+  @@map("students")
+}
+
+model Parent {
+  id           Int      @id @default(autoincrement())
+  mobile       String   @unique
+  name         String?
+  relation     String   @default("Guardian") // Father / Mother / Guardian
+  email        String?
+  passwordHash String?  @map("password_hash")
+  fcmToken     String?  @map("fcm_token")
+  isActive     Boolean  @default(true) @map("is_active")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  students StudentParent[]
+  calls    CallSession[]
+
+  @@map("parents")
+}
+
+model StudentParent {
+  id        Int      @id @default(autoincrement())
+  studentId Int      @map("student_id")
+  parentId  Int      @map("parent_id")
+  isPrimary Boolean  @default(false) @map("is_primary")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  student Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  parent  Parent  @relation(fields: [parentId], references: [id], onDelete: Cascade)
+
+  @@unique([studentId, parentId])
+  @@map("student_parents")
+}
+
+model CallSession {
+  id                    String    @id @default(uuid())
+  studentId             Int       @map("student_id")
+  parentId              Int       @map("parent_id")
+  schoolId              Int       @map("school_id")
+  startedAt             DateTime? @map("started_at")
+  endedAt               DateTime? @map("ended_at")
+  durationSeconds       Int       @default(0) @map("duration_seconds")
+  purchasedDurationMins Int?      @map("purchased_duration_mins")
+  pricePerMinute        Float?    @map("price_per_minute")
+  totalAmount           Float?    @map("total_amount")
+  status                String    @default("initiated") // initiated, ringing, ongoing, completed, missed, rejected, failed
+  chargeAmount          Float     @default(0) @map("charge_amount")
+  isUnlimited           Boolean   @default(false) @map("is_unlimited")
+  agoraChannel          String?   @map("agora_channel")
+  agoraTokenStudent     String?   @map("agora_token_student")
+  agoraTokenParent      String?   @map("agora_token_parent")
+  meetLink              String?   @map("meet_link")
+  initiatedBy           String    @default("student") @map("initiated_by")
+  createdAt             DateTime  @default(now()) @map("created_at")
+
+  student Student @relation(fields: [studentId], references: [id])
+  parent  Parent  @relation(fields: [parentId], references: [id])
+  school  School  @relation(fields: [schoolId], references: [id])
+
+  @@index([studentId])
+  @@index([parentId])
+  @@index([schoolId])
+  @@index([status])
+  @@map("call_sessions")
+}
+
+model Recharge {
+  id              Int      @id @default(autoincrement())
+  studentId       Int      @map("student_id")
+  schoolId        Int?     @map("school_id")
+  parentId        Int?     @map("parent_id")
+  amount          Float
+  currency        String   @default("INR")
+  pricePerMinute  Float?   @map("price_per_minute")
+  durationMinutes Int?     @map("duration_minutes")
+  paymentMode     String   @map("payment_mode") // parent_app / school_cash / school_online / admin
+  transactionId   String?  @map("transaction_id")
+  paymentGateway  String?  @map("payment_gateway")
+  razorpayOrderId String?  @map("razorpay_order_id")
+  razorpayPaymentId String? @map("razorpay_payment_id")
+  status          String   @default("pending") // pending, success, failed, refunded
+  rechargedByType String   @map("recharged_by_type") // parent / school / super_admin
+  rechargedById   Int?     @map("recharged_by_id")
+  notes           String?
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  student Student @relation(fields: [studentId], references: [id])
+
+  @@map("recharges")
+}
+
+model WalletTransaction {
+  id            Int      @id @default(autoincrement())
+  studentId     Int      @map("student_id")
+  type          String   // credit / debit
+  amount        Float
+  balanceAfter  Float  @map("balance_after")
+  referenceType String?  @map("reference_type") // recharge / call / refund / adjustment
+  referenceId   String?  @map("reference_id")
+  description   String?
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  student Student @relation(fields: [studentId], references: [id])
+
+  @@map("wallet_transactions")
+}
+
+model PlatformSetting {
+  id          Int      @id @default(autoincrement())
+  key         String   @unique
+  value       String?
+  description String?
+  updatedById Int?     @map("updated_by")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@map("platform_settings")
+}
