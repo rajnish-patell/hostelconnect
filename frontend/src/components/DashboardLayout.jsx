@@ -11,12 +11,18 @@ import {
   Search,
   LogOut,
   User,
+  Lock,
   Settings,
   Shield,
   HelpCircle,
   Sparkles,
 } from 'lucide-react';
+import toast from 'react-hot-toast';
+import api from '../api';
 import { getUser, logout } from '../utils/auth';
+import Modal from './ui/Modal';
+import Input from './ui/Input';
+import Button from './ui/Button';
 
 export default function DashboardLayout({
   navLinks = [],
@@ -37,6 +43,39 @@ export default function DashboardLayout({
   const [userDropdownOpen, setUserDropdownOpen] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [hoveredTooltip, setHoveredTooltip] = useState(null);
+
+  // Change password modal state
+  const [changePasswordOpen, setChangePasswordOpen] = useState(false);
+  const [passwordForm, setPasswordForm] = useState({ currentPassword: '', newPassword: '', confirmPassword: '' });
+  const [passwordLoading, setPasswordLoading] = useState(false);
+  const [passwordError, setPasswordError] = useState('');
+
+  const handlePasswordSubmit = async (e) => {
+    e.preventDefault();
+    if (passwordForm.newPassword !== passwordForm.confirmPassword) {
+      setPasswordError('New passwords do not match');
+      return;
+    }
+    if (passwordForm.newPassword.length < 6) {
+      setPasswordError('New password must be at least 6 characters long');
+      return;
+    }
+    setPasswordLoading(true);
+    setPasswordError('');
+    try {
+      const res = await api.post('/auth/change-password', {
+        currentPassword: passwordForm.currentPassword,
+        newPassword: passwordForm.newPassword,
+      });
+      toast.success(res.data.message || 'Password changed successfully!');
+      setChangePasswordOpen(false);
+      setPasswordForm({ currentPassword: '', newPassword: '', confirmPassword: '' });
+    } catch (err) {
+      setPasswordError(err.response?.data?.message || 'Failed to change password');
+    } finally {
+      setPasswordLoading(false);
+    }
+  };
 
   const toggleCollapse = () => {
     setIsCollapsed((prev) => {
@@ -286,6 +325,18 @@ export default function DashboardLayout({
 
                       <button
                         type="button"
+                        onClick={() => {
+                          setUserDropdownOpen(false);
+                          setChangePasswordOpen(true);
+                        }}
+                        className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-bold text-[#1C252E] hover:bg-[#919EAB]/12 transition"
+                      >
+                        <Lock size={16} className="text-[#637381]" />
+                        <span>Change Password</span>
+                      </button>
+
+                      <button
+                        type="button"
                         onClick={logout}
                         className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-bold text-[#FF5630] hover:bg-[#FF5630]/10 transition"
                       >
@@ -402,6 +453,71 @@ export default function DashboardLayout({
           </div>
         )}
       </AnimatePresence>
+
+      {/* Change Password Modal */}
+      <Modal
+        isOpen={changePasswordOpen}
+        onClose={() => {
+          setChangePasswordOpen(false);
+          setPasswordError('');
+          setPasswordForm({ currentPassword: '', newPassword: '', confirmPassword: '' });
+        }}
+        title="Change Password"
+        subtitle="Update account password securely"
+      >
+        <form onSubmit={handlePasswordSubmit} className="space-y-4">
+          {passwordError && (
+            <div className="p-3 text-xs bg-red-50 text-red-600 border border-red-200 rounded-xl font-medium">
+              {passwordError}
+            </div>
+          )}
+
+          <Input
+            label="Current Password"
+            type="password"
+            placeholder="Enter current password"
+            value={passwordForm.currentPassword}
+            onChange={(e) => setPasswordForm({ ...passwordForm, currentPassword: e.target.value })}
+            required
+          />
+
+          <Input
+            label="New Password"
+            type="password"
+            placeholder="Min. 6 characters"
+            value={passwordForm.newPassword}
+            onChange={(e) => setPasswordForm({ ...passwordForm, newPassword: e.target.value })}
+            required
+          />
+
+          <Input
+            label="Confirm New Password"
+            type="password"
+            placeholder="Repeat new password"
+            value={passwordForm.confirmPassword}
+            onChange={(e) => setPasswordForm({ ...passwordForm, confirmPassword: e.target.value })}
+            required
+          />
+
+          <div className="flex items-center justify-end gap-2 pt-2">
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              onClick={() => {
+                setChangePasswordOpen(false);
+                setPasswordError('');
+                setPasswordForm({ currentPassword: '', newPassword: '', confirmPassword: '' });
+              }}
+            >
+              Cancel
+            </Button>
+            <Button type="submit" variant="primary" size="sm" isLoading={passwordLoading}>
+              Update Password
+            </Button>
+          </div>
+        </form>
+      </Modal>
     </div>
   );
 }
