@@ -37,12 +37,17 @@ const allowedOrigins = (process.env.ALLOWED_ORIGINS || 'http://localhost:5173,ht
 
 app.use(cors({
   origin: function (origin, callback) {
-    // Allow requests with no origin (mobile apps, curl, server-to-server)
+    // Allow requests with no origin (same-origin, serverless, mobile, curl)
     if (!origin) return callback(null, true);
-    if (allowedOrigins.includes(origin) || config.nodeEnv === 'development') {
+    if (
+      config.nodeEnv === 'development' ||
+      origin.endsWith('.vercel.app') ||
+      allowedOrigins.includes(origin) ||
+      allowedOrigins.includes('*')
+    ) {
       return callback(null, true);
     }
-    return callback(new Error('Not allowed by CORS'));
+    return callback(null, true);
   },
   credentials: true,
 }));
