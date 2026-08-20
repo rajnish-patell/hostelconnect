@@ -83,6 +83,8 @@ async function sendEmailOtp(email) {
     attempts: 0,
   });
 
+  const transporter = getTransporter();
+
   if (transporter) {
     const fromAddress = process.env.SMTP_FROM || `"Hostel Video Call" <${process.env.SMTP_USER}>`;
 
