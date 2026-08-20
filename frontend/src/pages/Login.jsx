@@ -115,9 +115,9 @@ export default function Login() {
         const cleanEmail = form.email.trim().toLowerCase();
 
         if (!otpSent) {
-          await api.post('/auth/parent/request-otp', { email: cleanEmail });
+          const reqRes = await api.post('/auth/parent/request-otp', { email: cleanEmail });
           setOtpSent(true);
-          toast.success(`OTP sent to ${cleanEmail}! (Demo OTP: 123456)`);
+          toast.success(reqRes.data.message || `OTP sent to ${cleanEmail}!`, { duration: 7000 });
         } else {
           res = await api.post('/auth/parent/verify-otp', {
             email: cleanEmail,
@@ -446,7 +446,7 @@ export default function Login() {
                           icon={KeyRound}
                           placeholder="123456"
                           className="font-mono text-center tracking-widest text-base font-bold"
-                          helperText="Use demo OTP: 123456"
+                          helperText="Enter 6-digit verification code sent to your email"
                         />
                       </motion.div>
                     )}

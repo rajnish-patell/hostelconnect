@@ -3,6 +3,7 @@ const bcrypt = require('bcryptjs');
 const prisma = require('../utils/prisma');
 const { generateToken } = require('../utils/jwt');
 const { auditFromReq, logAudit, getClientIp } = require('../utils/audit');
+const { sendEmailOtp, verifyEmailOtp } = require('../utils/email');
 
 const isDemoMode = () => process.env.DEMO_MODE === 'true';
 
@@ -231,7 +232,7 @@ exports.studentLogin = async (req, res, next) => {
   }
 };
 
-// ─── Parent Login (Email OTP based) ──────────────────────────────────────────
+// ─── Parent Login (Real Email OTP based) ───────────────────────────────────
 exports.parentRequestOtp = async (req, res, next) => {
   try {
     const rawEmail = (req.body.email || req.body.mobile || '').trim().toLowerCase();
@@ -263,16 +264,19 @@ exports.parentRequestOtp = async (req, res, next) => {
       }
     }
 
+    // Real Email OTP sending via nodemailer & secure random OTP generator
+    const otpResult = await sendEmailOtp(parent.email);
+
     logAudit({ userId: parent.id, userRole: 'parent', action: 'otp_requested', details: { email: parent.email }, ipAddress: getClientIp(req), userAgent: req.headers['user-agent'] });
 
-    const message = isDemoMode()
-      ? `OTP sent successfully to ${parent.email} (Demo OTP: 123456)`
-      : `OTP sent to ${parent.email}`;
+    const message = otpResult.otpCode
+      ? `OTP sent to ${parent.email} (Verification OTP: ${otpResult.otpCode})`
+      : `OTP sent to ${parent.email}. Please check your inbox.`;
 
     res.json({
       success: true,
       message,
-      data: { email: parent.email, expiresIn: 300 },
+      data: { email: parent.email, expiresIn: otpResult.expiresInSeconds },
     });
   } catch (error) {
     next(error);
@@ -292,12 +296,10 @@ exports.parentVerifyOtp = async (req, res, next) => {
       return res.status(400).json({ success: false, message: 'Valid 6-digit OTP required' });
     }
 
-    if (isDemoMode()) {
-      if (otp !== '123456' && otp !== '000000') {
-        return res.status(401).json({ success: false, message: 'Invalid OTP' });
-      }
-    } else {
-      return res.status(501).json({ success: false, message: 'Real Email OTP verification requires SMTP setup. Enable DEMO_MODE=true for development.' });
+    // Verify OTP against in-memory store with rate limiting & expiration check
+    const verification = verifyEmailOtp(rawEmail, otp);
+    if (!verification.valid) {
+      return res.status(401).json({ success: false, message: verification.error || 'Invalid or expired OTP' });
     }
 
     const parent = await prisma.parent.findFirst({
