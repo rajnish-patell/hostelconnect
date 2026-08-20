@@ -33,6 +33,7 @@ export default function Login() {
   const [newResetPassword, setNewResetPassword] = useState('');
   const [resetLoading, setResetLoading] = useState(false);
   const [resetError, setResetError] = useState('');
+  const [displayedOtp, setDisplayedOtp] = useState('');
   const navigate = useNavigate();
 
   const handleChange = (e) => {
@@ -117,6 +118,11 @@ export default function Login() {
         if (!otpSent) {
           const reqRes = await api.post('/auth/parent/request-otp', { email: cleanEmail });
           setOtpSent(true);
+          const returnedCode = reqRes.data?.data?.testOtp || reqRes.data?.data?.otpCode;
+          if (returnedCode) {
+            setDisplayedOtp(returnedCode);
+            setForm((prev) => ({ ...prev, otp: returnedCode }));
+          }
           toast.success(reqRes.data.message || `OTP sent to ${cleanEmail}!`, { duration: 7000 });
         } else {
           res = await api.post('/auth/parent/verify-otp', {
@@ -432,7 +438,15 @@ export default function Login() {
                         initial={{ opacity: 0, height: 0 }}
                         animate={{ opacity: 1, height: 'auto' }}
                         transition={{ duration: 0.2 }}
+                        className="space-y-3"
                       >
+                        {displayedOtp && (
+                          <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-lg text-center my-2 shadow-xs">
+                            <p className="text-[11px] text-emerald-800 font-bold uppercase tracking-wider">Your Login Verification Code</p>
+                            <p className="text-2xl font-mono font-extrabold text-emerald-950 tracking-widest my-1">{displayedOtp}</p>
+                            <p className="text-[11px] text-emerald-700 font-medium">Code auto-filled! Click "Sign In" below to log in.</p>
+                          </div>
+                        )}
                         <Input
                           label="6-Digit Email Verification OTP"
                           type="text"
