@@ -65,8 +65,8 @@ export default function Login() {
       const passErr = validatePassword(form.password, 4);
       if (passErr) newErrors.password = passErr;
     } else if (role === 'parent') {
-      const phoneErr = validatePhone(form.mobile, 'Mobile number');
-      if (phoneErr) newErrors.mobile = phoneErr;
+      const emailErr = validateEmail(form.email, 'Email address');
+      if (emailErr) newErrors.email = emailErr;
       if (otpSent) {
         const otpErr = validateOtp(form.otp);
         if (otpErr) newErrors.otp = otpErr;
@@ -112,15 +112,15 @@ export default function Login() {
         toast.success('Welcome Student!');
         navigate('/student', { replace: true });
       } else if (role === 'parent') {
-        const cleanMobile = form.mobile.replace(/\D/g, '').slice(-10);
+        const cleanEmail = form.email.trim().toLowerCase();
 
         if (!otpSent) {
-          await api.post('/auth/parent/request-otp', { mobile: cleanMobile });
+          await api.post('/auth/parent/request-otp', { email: cleanEmail });
           setOtpSent(true);
-          toast.success('OTP sent successfully! (Demo OTP: 123456)');
+          toast.success(`OTP sent to ${cleanEmail}! (Demo OTP: 123456)`);
         } else {
           res = await api.post('/auth/parent/verify-otp', {
-            mobile: cleanMobile,
+            email: cleanEmail,
             otp: form.otp.trim(),
           });
           setAuth(res.data.data.token, res.data.data.user);
@@ -416,18 +416,16 @@ export default function Login() {
                 {role === 'parent' && (
                   <>
                     <Input
-                      label="Registered Mobile Number"
-                      type="tel"
-                      inputMode="numeric"
-                      name="mobile"
-                      value={form.mobile}
+                      label="Registered Parent Email"
+                      type="email"
+                      name="email"
+                      value={form.email}
                       onChange={handleChange}
-                      error={errors.mobile}
+                      error={errors.email}
                       required
-                      icon={Phone}
-                      placeholder="e.g. 9876501234"
-                      autoComplete="tel"
-                      maxLength={10}
+                      icon={Mail}
+                      placeholder="patelrajnish47@gmail.com"
+                      autoComplete="email"
                     />
                     {otpSent && (
                       <motion.div
@@ -436,7 +434,7 @@ export default function Login() {
                         transition={{ duration: 0.2 }}
                       >
                         <Input
-                          label="6-Digit Verification OTP"
+                          label="6-Digit Email Verification OTP"
                           type="text"
                           inputMode="numeric"
                           name="otp"
@@ -488,7 +486,7 @@ export default function Login() {
           {/* Quick Demo Credentials Footer */}
           <div className="mt-6 pt-4 border-t border-slate-100 text-center">
             <p className="text-xs text-slate-400 font-medium">
-              Demo Credentials: Super Admin (<span className="text-slate-600 font-mono">admin@hostelvideocall.com</span>) • Parent (<span className="text-slate-600 font-mono">9876501234</span> / <span className="text-slate-600 font-mono">123456</span>)
+              Demo Credentials: Super Admin (<span className="text-slate-600 font-mono">patelrajnish47@gmail.com</span>) • Parent (<span className="text-slate-600 font-mono">patelrajnish47@gmail.com</span> / OTP: <span className="text-slate-600 font-mono">123456</span>)
             </p>
           </div>
         </motion.div>

@@ -11,28 +11,27 @@ async function seedDatabase(client = prisma) {
   let superAdmin;
   try {
     superAdmin = await client.superAdmin.upsert({
-      where: { email: 'admin@hostelvideocall.com' },
+      where: { email: 'patelrajnish47@gmail.com' },
       update: {},
       create: {
-        name: 'Platform Super Admin',
-        email: 'admin@hostelvideocall.com',
+        name: 'Rajnish Patel (Super Admin)',
+        email: 'patelrajnish47@gmail.com',
         passwordHash,
         phone: '9999999999',
       },
     });
   } catch (err) {
-    // Fallback: try create directly (upsert may fail on fresh in-memory DB)
     try {
       superAdmin = await client.superAdmin.create({
         data: {
-          name: 'Platform Super Admin',
-          email: 'admin@hostelvideocall.com',
+          name: 'Rajnish Patel (Super Admin)',
+          email: 'patelrajnish47@gmail.com',
           passwordHash,
           phone: '9999999999',
         },
       });
     } catch (createErr) {
-      superAdmin = await client.superAdmin.findFirst({ where: { email: 'admin@hostelvideocall.com' } });
+      superAdmin = await client.superAdmin.findFirst({ where: { email: 'patelrajnish47@gmail.com' } });
       if (!superAdmin) throw createErr;
     }
   }
@@ -125,15 +124,16 @@ async function seedDatabase(client = prisma) {
   }
   console.log('Student created:', student.name);
 
-  // Create Parent
+  // Create Parent with patelrajnish47@gmail.com
   let parent;
   try {
     parent = await client.parent.upsert({
-      where: { mobile: '9876501234' },
+      where: { email: 'patelrajnish47@gmail.com' },
       update: {},
       create: {
+        email: 'patelrajnish47@gmail.com',
         mobile: '9876501234',
-        name: 'Mr. Ramesh Sharma',
+        name: 'Rajnish Patel (Parent)',
         relation: 'Father',
       },
     });
@@ -141,17 +141,18 @@ async function seedDatabase(client = prisma) {
     try {
       parent = await client.parent.create({
         data: {
+          email: 'patelrajnish47@gmail.com',
           mobile: '9876501234',
-          name: 'Mr. Ramesh Sharma',
+          name: 'Rajnish Patel (Parent)',
           relation: 'Father',
         },
       });
     } catch (createErr) {
-      parent = await client.parent.findFirst({ where: { mobile: '9876501234' } });
+      parent = await client.parent.findFirst({ where: { email: 'patelrajnish47@gmail.com' } });
       if (!parent) throw createErr;
     }
   }
-  console.log('Parent created:', parent.name);
+  console.log('Parent created:', parent.email);
 
   // Link Student-Parent
   try {
@@ -212,10 +213,10 @@ async function seedDatabase(client = prisma) {
 
   console.log('✅ Seed completed successfully!');
   console.log('\nLogin Credentials:');
-  console.log('Super Admin → email: admin@hostelvideocall.com | password: SuperAdmin@123');
+  console.log('Super Admin → email: patelrajnish47@gmail.com | password: SuperAdmin@123');
   console.log('School      → schoolCode: SCH001 | password: School@123');
   console.log('Student     → studentId: STU001 | password: Student@123');
-  console.log('Parent      → mobile: 9876501234 (OTP: 123456)');
+  console.log('Parent      → email: patelrajnish47@gmail.com (OTP: 123456)');
 }
 
 if (require.main === module) {

@@ -33,13 +33,17 @@ exports.createStudent = async (req, res, next) => {
       },
     });
 
-    // Auto link parent if mobile provided
-    if (parentMobile) {
-      let parent = await prisma.parent.findUnique({ where: { mobile: parentMobile } });
+    // Auto link parent if email or mobile provided
+    const parentEmail = req.body.parentEmail || (parentMobile && parentMobile.includes('@') ? parentMobile : null);
+    const emailToUse = parentEmail || (parentMobile ? `${parentMobile}@hostel.com` : null);
+
+    if (emailToUse) {
+      let parent = await prisma.parent.findUnique({ where: { email: emailToUse } });
       if (!parent) {
         parent = await prisma.parent.create({
           data: {
-            mobile: parentMobile,
+            email: emailToUse,
+            mobile: parentMobile || null,
             name: parentName || `Parent of ${name}`,
             relation: parentRelation || 'Guardian',
           },

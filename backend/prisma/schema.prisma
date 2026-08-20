@@ -82,10 +82,10 @@ model Student {
 
 model Parent {
   id           Int      @id @default(autoincrement())
-  mobile       String   @unique
+  email        String   @unique
+  mobile       String?
   name         String?
   relation     String   @default("Guardian") // Father / Mother / Guardian
-  email        String?
   passwordHash String?  @map("password_hash")
   fcmToken     String?  @map("fcm_token")
   isActive     Boolean  @default(true) @map("is_active")
