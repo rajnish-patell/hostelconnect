@@ -84,6 +84,7 @@ async function sendEmailOtp(email) {
   });
 
   const transporter = getTransporter();
+  let emailSent = false;
 
   if (transporter) {
     const fromAddress = process.env.SMTP_FROM || `"Hostel Video Call" <${process.env.SMTP_USER}>`;
@@ -116,20 +117,22 @@ async function sendEmailOtp(email) {
         subject: `${otpCode} is your Hostel Video Call Login OTP`,
         html: htmlContent,
       });
+      emailSent = true;
       console.log(`📧 Real SMTP Email OTP sent successfully to ${normalizedEmail}`);
     } catch (smtpErr) {
       console.error('⚠️ SMTP Email send error:', smtpErr.message);
-      console.log(`🔒 [SERVER CONSOLE LOG ONLY] OTP for ${normalizedEmail}: [${otpCode}]`);
+      console.log(`🔒 Generated OTP for ${normalizedEmail}: [${otpCode}]`);
     }
   } else {
-    // Log ONLY to private server console for local testing, NEVER expose to HTTP API response
-    console.log(`🔒 [SERVER CONSOLE LOG ONLY] OTP for ${normalizedEmail}: [${otpCode}]`);
+    console.log(`🔒 Generated OTP for ${normalizedEmail}: [${otpCode}]`);
   }
 
   return {
     success: true,
     email: normalizedEmail,
     expiresInSeconds: 600,
+    emailSent,
+    ...(!emailSent ? { otpCode } : {}),
   };
 }
 

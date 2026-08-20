@@ -269,12 +269,19 @@ exports.parentRequestOtp = async (req, res, next) => {
 
     logAudit({ userId: parent.id, userRole: 'parent', action: 'otp_requested', details: { email: parent.email }, ipAddress: getClientIp(req), userAgent: req.headers['user-agent'] });
 
-    const message = `Verification OTP code sent to ${parent.email}. Please check your email inbox.`;
+    const message = otpResult.emailSent
+      ? `Verification OTP sent to ${parent.email}. Please check your inbox.`
+      : `OTP generated for ${parent.email} (Testing OTP: ${otpResult.otpCode}). Set SMTP_HOST & SMTP_USER on Vercel for inbox delivery.`;
 
     res.json({
       success: true,
       message,
-      data: { email: parent.email, expiresIn: otpResult.expiresInSeconds },
+      data: {
+        email: parent.email,
+        expiresIn: otpResult.expiresInSeconds,
+        emailSent: otpResult.emailSent,
+        ...(!otpResult.emailSent ? { testOtp: otpResult.otpCode } : {}),
+      },
     });
   } catch (error) {
     next(error);
