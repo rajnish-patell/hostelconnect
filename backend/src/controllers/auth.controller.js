@@ -269,9 +269,7 @@ exports.parentRequestOtp = async (req, res, next) => {
 
     logAudit({ userId: parent.id, userRole: 'parent', action: 'otp_requested', details: { email: parent.email }, ipAddress: getClientIp(req), userAgent: req.headers['user-agent'] });
 
-    const message = otpResult.otpCode
-      ? `OTP sent to ${parent.email} (Verification OTP: ${otpResult.otpCode})`
-      : `OTP sent to ${parent.email}. Please check your inbox.`;
+    const message = `Verification OTP code sent to ${parent.email}. Please check your email inbox.`;
 
     res.json({
       success: true,

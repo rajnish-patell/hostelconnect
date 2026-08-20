@@ -83,8 +83,6 @@ async function sendEmailOtp(email) {
     attempts: 0,
   });
 
-  const transporter = getTransporter();
-
   if (transporter) {
     const fromAddress = process.env.SMTP_FROM || `"Hostel Video Call" <${process.env.SMTP_USER}>`;
 
@@ -116,21 +114,20 @@ async function sendEmailOtp(email) {
         subject: `${otpCode} is your Hostel Video Call Login OTP`,
         html: htmlContent,
       });
-      console.log(`📧 Real SMTP Email OTP sent to ${normalizedEmail}`);
+      console.log(`📧 Real SMTP Email OTP sent successfully to ${normalizedEmail}`);
     } catch (smtpErr) {
       console.error('⚠️ SMTP Email send error:', smtpErr.message);
-      console.log(`🔑 Real Generated OTP for ${normalizedEmail}: [${otpCode}]`);
+      console.log(`🔒 [SERVER CONSOLE LOG ONLY] OTP for ${normalizedEmail}: [${otpCode}]`);
     }
   } else {
-    console.log(`🔑 Real Generated OTP for ${normalizedEmail}: [${otpCode}]`);
+    // Log ONLY to private server console for local testing, NEVER expose to HTTP API response
+    console.log(`🔒 [SERVER CONSOLE LOG ONLY] OTP for ${normalizedEmail}: [${otpCode}]`);
   }
 
   return {
     success: true,
     email: normalizedEmail,
     expiresInSeconds: 600,
-    // Include otpCode in response if SMTP is not configured or DEMO_MODE is true for seamless experience
-    ...(process.env.DEMO_MODE === 'true' || !transporter ? { otpCode } : {}),
   };
 }
 
@@ -140,12 +137,6 @@ async function sendEmailOtp(email) {
 function verifyEmailOtp(email, inputOtp) {
   const normalizedEmail = email.trim().toLowerCase();
   const record = otpStore.get(normalizedEmail);
-
-  // Demo shortcut fallback if DEMO_MODE=true
-  if (process.env.DEMO_MODE === 'true' && (inputOtp === '123456' || inputOtp === '000000')) {
-    otpStore.delete(normalizedEmail);
-    return { valid: true };
-  }
 
   if (!record) {
     return { valid: false, error: 'OTP expired or not requested. Please request a new OTP.' };

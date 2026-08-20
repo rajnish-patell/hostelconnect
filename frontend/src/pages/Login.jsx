@@ -486,7 +486,7 @@ export default function Login() {
           {/* Quick Demo Credentials Footer */}
           <div className="mt-6 pt-4 border-t border-slate-100 text-center">
             <p className="text-xs text-slate-400 font-medium">
-              Demo Credentials: Super Admin (<span className="text-slate-600 font-mono">patelrajnish47@gmail.com</span>) • Parent (<span className="text-slate-600 font-mono">patelrajnish47@gmail.com</span> / OTP: <span className="text-slate-600 font-mono">123456</span>)
+              Demo Credentials: Super Admin (<span className="text-slate-600 font-mono">patelrajnish47@gmail.com</span>) • Parent (<span className="text-slate-600 font-mono">patelrajnish47@gmail.com</span> via Email OTP)
             </p>
           </div>
         </motion.div>
