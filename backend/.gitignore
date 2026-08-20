@@ -8,3 +8,5 @@ build/
 .idea/
 coverage/
 .prisma/
+*.db
+*.db-journal

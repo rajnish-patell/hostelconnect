@@ -1,9 +1,10 @@
 import { useState, useEffect } from 'react';
 import { Routes, Route, Link, useLocation } from 'react-router-dom';
 import toast from 'react-hot-toast';
-import { Building2, Users, LogOut, Plus, Power, UserPlus, Menu, Video, ShieldCheck, Edit2, Trash2, CreditCard, Phone, RefreshCw } from 'lucide-react';
+import { Building2, Users, LogOut, Plus, Power, UserPlus, Menu, Video, ShieldCheck, Edit2, Trash2, CreditCard, Phone, RefreshCw, LayoutDashboard } from 'lucide-react';
 import api from '../api';
 import { getUser, logout } from '../utils/auth';
+import DashboardLayout from '../components/DashboardLayout';
 import MobileNavDrawer from '../components/MobileNavDrawer';
 import Button from '../components/ui/Button';
 import Input from '../components/ui/Input';
@@ -12,6 +13,7 @@ import StatCard from '../components/ui/StatCard';
 import Modal from '../components/ui/Modal';
 import { Card } from '../components/ui/Card';
 import EmptyState from '../components/ui/EmptyState';
+import ResponsiveTable from '../components/ui/ResponsiveTable';
 import {
   validateText,
   validatePassword,
@@ -88,31 +90,43 @@ function Sidebar() {
 }
 
 function DashboardHome() {
-  const [stats, setStats] = useState({ schools: 0, students: 0, revenue: 0, minutes: 0 });
+  const [stats, setStats] = useState({ schools: 0, students: 0, revenue: 0, minutes: 0, failedPayments: 0, pendingPayments: 0 });
 
   useEffect(() => {
-    Promise.all([
-      api.get('/schools').catch(() => ({ data: { data: [] } })),
-      api.get('/recharge/transactions').catch(() => ({ data: { data: [] } })),
-      api.get('/calls/history').catch(() => ({ data: { data: [] } })),
-    ]).then(([schoolsRes, txRes, callsRes]) => {
-      const schools = schoolsRes.data.data || [];
-      const txs = txRes.data.data || [];
-      const calls = callsRes.data.data || [];
-
-      const totalRevenue = txs
-        .filter((t) => t.status === 'success')
-        .reduce((acc, t) => acc + parseFloat(t.amount || 0), 0);
-
-      const totalSeconds = calls.reduce((acc, c) => acc + (c.durationSeconds || 0), 0);
-
-      setStats({
-        schools: schools.length,
-        students: schools.reduce((acc, s) => acc + (s._count?.students || 0), 0),
-        revenue: totalRevenue,
-        minutes: Math.floor(totalSeconds / 60),
+    api.get('/admin/dashboard/stats')
+      .then((res) => {
+        const d = res.data.data;
+        setStats({
+          schools: d.schools?.total || 0,
+          students: d.students?.total || 0,
+          revenue: d.payments?.totalRevenue || 0,
+          minutes: d.calls?.totalMinutes || 0,
+          failedPayments: d.payments?.failedPayments || 0,
+          pendingPayments: d.payments?.pendingPayments || 0,
+        });
+      })
+      .catch(() => {
+        // Fallback: fetch from individual endpoints
+        Promise.all([
+          api.get('/schools').catch(() => ({ data: { data: [] } })),
+          api.get('/recharge/transactions').catch(() => ({ data: { data: [] } })),
+          api.get('/calls/history').catch(() => ({ data: { data: [] } })),
+        ]).then(([schoolsRes, txRes, callsRes]) => {
+          const schools = schoolsRes.data.data || [];
+          const txs = txRes.data.data || [];
+          const calls = callsRes.data.data || [];
+          const totalRevenue = txs.filter((t) => t.status === 'success').reduce((acc, t) => acc + parseFloat(t.amount || 0), 0);
+          const totalSeconds = calls.reduce((acc, c) => acc + (c.durationSeconds || 0), 0);
+          setStats({
+            schools: schools.length,
+            students: schools.reduce((acc, s) => acc + (s._count?.students || 0), 0),
+            revenue: totalRevenue,
+            minutes: Math.floor(totalSeconds / 60),
+            failedPayments: txs.filter((t) => t.status === 'failed').length,
+            pendingPayments: txs.filter((t) => t.status === 'pending').length,
+          });
+        }).catch(() => {});
       });
-    });
   }, []);
 
   return (
@@ -121,7 +135,7 @@ function DashboardHome() {
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h2 className="text-xl font-bold text-slate-900 tracking-tight">Platform Overview</h2>
-          <p className="text-xs sm:text-sm text-slate-500 mt-0.5">High-level statistics, revenue visibility, and school management</p>
+          <p className="text-xs sm:text-sm text-slate-500 mt-0.5">Real-time statistics from the database</p>
         </div>
         <div className="flex flex-wrap items-center gap-2.5">
           <Link to="/superadmin/schools">
@@ -134,7 +148,7 @@ function DashboardHome() {
       </div>
 
       {/* Metrics Row */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-5">
+      <div className="grid grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-5">
         <StatCard
           title="Registered Schools"
           value={stats.schools}
@@ -152,7 +166,7 @@ function DashboardHome() {
         <StatCard
           title="Calling Revenue"
           value={`₹${stats.revenue.toFixed(2)}`}
-          subtitle="Gross UPI & cash recharge"
+          subtitle="Verified payment revenue"
           icon={CreditCard}
           iconBg="bg-emerald-50 text-emerald-600 border border-emerald-100"
         />
@@ -162,6 +176,20 @@ function DashboardHome() {
           subtitle="Completed HD video sessions"
           icon={Phone}
           iconBg="bg-amber-50 text-amber-600 border border-amber-100"
+        />
+        <StatCard
+          title="Failed Payments"
+          value={stats.failedPayments}
+          subtitle="Gateway rejected"
+          icon={CreditCard}
+          iconBg="bg-rose-50 text-rose-600 border border-rose-100"
+        />
+        <StatCard
+          title="Pending Payments"
+          value={stats.pendingPayments}
+          subtitle="Awaiting confirmation"
+          icon={RefreshCw}
+          iconBg="bg-yellow-50 text-yellow-600 border border-yellow-100"
         />
       </div>
     </div>
@@ -589,73 +617,71 @@ function SchoolsPage() {
         </form>
       </Modal>
 
-      {/* Schools Table */}
+      {/* Schools — Responsive Table/Cards */}
       <Card className="overflow-hidden">
-        <div className="overflow-x-auto min-w-full">
-          <table className="w-full text-left text-xs sm:text-sm">
-            <thead className="bg-slate-50/80 text-slate-600 font-semibold border-b border-slate-200/80 text-[11px] tracking-wider">
-              <tr>
-                <th className="px-4 py-3">Code</th>
-                <th className="px-4 py-3">School Name</th>
-                <th className="px-4 py-3">Students</th>
-                <th className="px-4 py-3">Rate / Min</th>
-                <th className="px-4 py-3">Status</th>
-                <th className="px-4 py-3 text-right">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100 font-medium">
-              {schools.length === 0 ? (
-                <tr>
-                  <td colSpan="6">
-                    <EmptyState
-                      icon={Building2}
-                      title="No schools registered"
-                      description="Click 'Add School' to onboard your first institution."
-                      actionLabel="Add School"
-                      onAction={() => setIsModalOpen(true)}
-                    />
-                  </td>
-                </tr>
-              ) : (
-                schools.map((s) => (
-                  <tr key={s.id} className="hover:bg-slate-50/60 transition-colors">
-                    <td className="px-4 py-3.5 font-bold text-brand-700 font-mono">{s.schoolCode}</td>
-                    <td className="px-4 py-3.5 font-semibold text-slate-900">{s.name}</td>
-                    <td className="px-4 py-3.5 text-slate-700">{s._count?.students || 0}</td>
-                    <td className="px-4 py-3.5 font-semibold text-slate-700">₹{s.perMinuteCharge}</td>
-                    <td className="px-4 py-3.5">
-                      <Badge variant={s.isActive ? 'success' : 'danger'} withDot>
-                        {s.isActive ? 'Active' : 'Inactive'}
-                      </Badge>
-                    </td>
-                    <td className="px-4 py-3.5 text-right">
-                      <div className="flex items-center justify-end gap-1.5">
-                        <Button
-                          variant="secondary"
-                          size="sm"
-                          icon={Edit2}
-                          onClick={() => openEditModal(s)}
-                          className="text-slate-700 hover:text-brand-700"
-                        >
-                          Edit
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          icon={Power}
-                          onClick={() => toggleStatus(s.id)}
-                          className="text-slate-600 hover:text-slate-900"
-                        >
-                          Toggle
-                        </Button>
-                      </div>
-                    </td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
+        {schools.length === 0 ? (
+          <EmptyState
+            icon={Building2}
+            title="No schools registered"
+            description="Click 'Add School' to onboard your first institution."
+            actionLabel="Add School"
+            onAction={() => setIsModalOpen(true)}
+          />
+        ) : (
+          <ResponsiveTable
+            columns={[
+              { key: 'code', label: 'Code' },
+              { key: 'name', label: 'School Name' },
+              { key: 'students', label: 'Students', hideOnMobile: true },
+              { key: 'rate', label: 'Rate / Min' },
+              { key: 'status', label: 'Status' },
+              { key: 'actions', label: 'Actions', className: 'text-right', hideOnMobile: true },
+            ]}
+            data={schools}
+            keyField="id"
+            renderCell={(s, col) => {
+              switch (col.key) {
+                case 'code': return <span className="font-bold text-brand-700 font-mono">{s.schoolCode}</span>;
+                case 'name': return <span className="font-semibold text-slate-900">{s.name}</span>;
+                case 'students': return <span className="text-slate-700">{s._count?.students || 0}</span>;
+                case 'rate': return <span className="font-semibold text-slate-700">₹{s.perMinuteCharge}</span>;
+                case 'status': return <Badge variant={s.isActive ? 'success' : 'danger'} withDot>{s.isActive ? 'Active' : 'Inactive'}</Badge>;
+                case 'actions': return (
+                  <div className="flex items-center justify-end gap-1.5">
+                    <Button variant="secondary" size="sm" icon={Edit2} onClick={() => openEditModal(s)} className="text-slate-700 hover:text-brand-700">Edit</Button>
+                    <Button variant="ghost" size="sm" icon={Power} onClick={() => toggleStatus(s.id)} className="text-slate-600 hover:text-slate-900">Toggle</Button>
+                  </div>
+                );
+                default: return null;
+              }
+            }}
+            renderMobileCard={(s) => (
+              <div className="bg-white rounded-xl border border-slate-200/90 shadow-card overflow-hidden">
+                <div className="px-4 py-3 flex items-center justify-between gap-3 border-b border-slate-100">
+                  <div className="min-w-0">
+                    <p className="font-bold text-sm text-slate-900 truncate">{s.name}</p>
+                    <p className="text-[11px] font-mono text-brand-700 font-bold">{s.schoolCode}</p>
+                  </div>
+                  <Badge variant={s.isActive ? 'success' : 'danger'} withDot>{s.isActive ? 'Active' : 'Inactive'}</Badge>
+                </div>
+                <div className="divide-y divide-slate-100">
+                  <div className="flex items-center justify-between px-4 py-2">
+                    <span className="text-[11px] font-semibold text-slate-500 uppercase">Students</span>
+                    <span className="text-sm font-medium text-slate-700">{s._count?.students || 0}</span>
+                  </div>
+                  <div className="flex items-center justify-between px-4 py-2">
+                    <span className="text-[11px] font-semibold text-slate-500 uppercase">Rate / Min</span>
+                    <span className="text-sm font-semibold text-slate-700">₹{s.perMinuteCharge}</span>
+                  </div>
+                </div>
+                <div className="px-4 py-3 bg-slate-50/70 border-t border-slate-100 flex items-center gap-2">
+                  <Button variant="secondary" size="sm" icon={Edit2} onClick={() => openEditModal(s)} className="flex-1">Edit</Button>
+                  <Button variant="ghost" size="sm" icon={Power} onClick={() => toggleStatus(s.id)} className="flex-1">Toggle</Button>
+                </div>
+              </div>
+            )}
+          />
+        )}
       </Card>
     </div>
   );
@@ -1285,108 +1311,106 @@ function StudentsPage() {
         </form>
       </Modal>
 
-      {/* Students Table */}
+      {/* Students — Responsive Table/Cards */}
       <Card className="overflow-hidden">
-        <div className="overflow-x-auto min-w-full">
-          <table className="w-full text-left text-xs sm:text-sm">
-            <thead className="bg-slate-50/80 text-slate-600 font-semibold border-b border-slate-200/80 text-[11px] tracking-wider">
-              <tr>
-                <th className="px-4 py-3">Student ID</th>
-                <th className="px-4 py-3">Name</th>
-                <th className="px-4 py-3">School</th>
-                <th className="px-4 py-3">Room / Class</th>
-                <th className="px-4 py-3">Wallet</th>
-                <th className="px-4 py-3">Linked Parents</th>
-                <th className="px-4 py-3">Status</th>
-                <th className="px-4 py-3 text-right">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100 font-medium">
-              {students.length === 0 ? (
-                <tr>
-                  <td colSpan="8">
-                    <EmptyState
-                      icon={Users}
-                      title="No students found"
-                      description="Add students to enable video calling sessions."
-                      actionLabel="Add Student"
-                      onAction={() => setIsModalOpen(true)}
-                    />
-                  </td>
-                </tr>
-              ) : (
-                students.map((s) => (
-                  <tr key={s.id} className="hover:bg-slate-50/60 transition-colors">
-                    <td className="px-4 py-3.5 font-bold text-brand-700 font-mono">{s.studentId}</td>
-                    <td className="px-4 py-3.5 font-semibold text-slate-900">{s.name}</td>
-                    <td className="px-4 py-3.5 text-slate-600">{s.school?.name || '—'}</td>
-                    <td className="px-4 py-3.5 text-slate-600">{s.roomNo || s.classSection || '—'}</td>
-                    <td className="px-4 py-3.5 font-bold text-slate-900 font-mono">
-                      ₹{parseFloat(s.walletBalance || 0).toFixed(2)}
-                    </td>
-                    <td className="px-4 py-3.5">
-                      <div className="flex flex-wrap gap-1.5 items-center">
-                        {s.parents && s.parents.length > 0 ? (
-                          s.parents.map((p) => (
-                            <button
-                              key={p.id}
-                              type="button"
-                              onClick={() => openEditParentModal(p.parent, s.id)}
-                              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-semibold bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 cursor-pointer transition"
-                              title="Click to edit parent contact"
-                            >
-                              <span>{p.parent?.name || p.parent?.mobile} ({p.parent?.relation})</span>
-                              <Edit2 size={10} className="text-slate-400" />
-                            </button>
-                          ))
-                        ) : (
-                          <span className="text-xs text-slate-400">None</span>
-                        )}
-                        <button
-                          onClick={() => {
-                            setParentModalStudent(s);
-                            setParentErrors({});
-                          }}
-                          className="inline-flex items-center gap-1 text-[11px] text-brand-600 hover:text-brand-700 font-semibold px-2 py-0.5 rounded-md bg-brand-50 hover:bg-brand-100/70 border border-brand-200 transition cursor-pointer"
-                          title="Add linked parent"
-                        >
-                          <UserPlus size={12} /> + Parent
+        {students.length === 0 ? (
+          <EmptyState
+            icon={Users}
+            title="No students found"
+            description="Add students to enable video calling sessions."
+            actionLabel="Add Student"
+            onAction={() => setIsModalOpen(true)}
+          />
+        ) : (
+          <ResponsiveTable
+            columns={[
+              { key: 'studentId', label: 'Student ID' },
+              { key: 'name', label: 'Name' },
+              { key: 'school', label: 'School', hideOnMobile: true },
+              { key: 'room', label: 'Room / Class', hideOnMobile: true },
+              { key: 'wallet', label: 'Wallet' },
+              { key: 'parents', label: 'Linked Parents', hideOnMobile: true },
+              { key: 'status', label: 'Status' },
+              { key: 'actions', label: 'Actions', className: 'text-right', hideOnMobile: true },
+            ]}
+            data={students}
+            keyField="id"
+            renderCell={(s, col) => {
+              switch (col.key) {
+                case 'studentId': return <span className="font-bold text-brand-700 font-mono">{s.studentId}</span>;
+                case 'name': return <span className="font-semibold text-slate-900">{s.name}</span>;
+                case 'school': return <span className="text-slate-600">{s.school?.name || '—'}</span>;
+                case 'room': return <span className="text-slate-600">{s.roomNo || s.classSection || '—'}</span>;
+                case 'wallet': return <span className="font-bold text-slate-900 font-mono">₹{parseFloat(s.walletBalance || 0).toFixed(2)}</span>;
+                case 'parents': return (
+                  <div className="flex flex-wrap gap-1.5 items-center">
+                    {s.parents && s.parents.length > 0 ? (
+                      s.parents.map((p) => (
+                        <button key={p.id} type="button" onClick={() => openEditParentModal(p.parent, s.id)}
+                          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-semibold bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 cursor-pointer transition">
+                          <span>{p.parent?.name || p.parent?.mobile} ({p.parent?.relation})</span>
+                          <Edit2 size={10} className="text-slate-400" />
                         </button>
-                      </div>
-                    </td>
-                    <td className="px-4 py-3.5">
-                      <Badge variant={s.isActive ? 'success' : 'danger'} withDot>
-                        {s.isActive ? 'Active' : 'Inactive'}
-                      </Badge>
-                    </td>
-                    <td className="px-4 py-3.5 text-right">
-                      <div className="flex items-center justify-end gap-1.5">
-                        <Button
-                          variant="secondary"
-                          size="sm"
-                          icon={Edit2}
-                          onClick={() => openEditStudentModal(s)}
-                          className="text-slate-700 hover:text-brand-700"
-                        >
-                          Edit
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          icon={Power}
-                          onClick={() => toggleStatus(s.id)}
-                          className="text-slate-600 hover:text-slate-900"
-                        >
-                          Toggle
-                        </Button>
-                      </div>
-                    </td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
+                      ))
+                    ) : <span className="text-xs text-slate-400">None</span>}
+                    <button onClick={() => { setParentModalStudent(s); setParentErrors({}); }}
+                      className="inline-flex items-center gap-1 text-[11px] text-brand-600 font-semibold px-2 py-0.5 rounded-md bg-brand-50 border border-brand-200 cursor-pointer">
+                      <UserPlus size={12} /> + Parent
+                    </button>
+                  </div>
+                );
+                case 'status': return <Badge variant={s.isActive ? 'success' : 'danger'} withDot>{s.isActive ? 'Active' : 'Inactive'}</Badge>;
+                case 'actions': return (
+                  <div className="flex items-center justify-end gap-1.5">
+                    <Button variant="secondary" size="sm" icon={Edit2} onClick={() => openEditStudentModal(s)} className="text-slate-700 hover:text-brand-700">Edit</Button>
+                    <Button variant="ghost" size="sm" icon={Power} onClick={() => toggleStatus(s.id)} className="text-slate-600 hover:text-slate-900">Toggle</Button>
+                  </div>
+                );
+                default: return null;
+              }
+            }}
+            renderMobileCard={(s) => (
+              <div className="bg-white rounded-xl border border-slate-200/90 shadow-card overflow-hidden">
+                <div className="px-4 py-3 flex items-center justify-between gap-3 border-b border-slate-100">
+                  <div className="min-w-0">
+                    <p className="font-bold text-sm text-slate-900 truncate">{s.name}</p>
+                    <p className="text-[11px] font-mono text-brand-700 font-bold">{s.studentId}</p>
+                    <p className="text-[11px] text-slate-500">{s.school?.name || '—'}</p>
+                  </div>
+                  <Badge variant={s.isActive ? 'success' : 'danger'} withDot>{s.isActive ? 'Active' : 'Inactive'}</Badge>
+                </div>
+                <div className="divide-y divide-slate-100">
+                  <div className="flex items-center justify-between px-4 py-2">
+                    <span className="text-[11px] font-semibold text-slate-500 uppercase">Wallet</span>
+                    <span className="text-sm font-bold text-slate-900 font-mono">₹{parseFloat(s.walletBalance || 0).toFixed(2)}</span>
+                  </div>
+                  <div className="px-4 py-2">
+                    <span className="text-[11px] font-semibold text-slate-500 uppercase block mb-1.5">Parents</span>
+                    <div className="flex flex-wrap gap-1.5">
+                      {s.parents && s.parents.length > 0 ? (
+                        s.parents.map((p) => (
+                          <button key={p.id} type="button" onClick={() => openEditParentModal(p.parent, s.id)}
+                            className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-semibold bg-slate-100 text-slate-700 border border-slate-200 cursor-pointer">
+                            <span>{p.parent?.name || p.parent?.mobile}</span>
+                            <Edit2 size={10} className="text-slate-400" />
+                          </button>
+                        ))
+                      ) : <span className="text-xs text-slate-400">None</span>}
+                      <button onClick={() => { setParentModalStudent(s); setParentErrors({}); }}
+                        className="inline-flex items-center gap-1 text-[11px] text-brand-600 font-semibold px-2 py-1 rounded-md bg-brand-50 border border-brand-200 cursor-pointer">
+                        <UserPlus size={12} /> Add
+                      </button>
+                    </div>
+                  </div>
+                </div>
+                <div className="px-4 py-3 bg-slate-50/70 border-t border-slate-100 flex items-center gap-2">
+                  <Button variant="secondary" size="sm" icon={Edit2} onClick={() => openEditStudentModal(s)} className="flex-1">Edit</Button>
+                  <Button variant="ghost" size="sm" icon={Power} onClick={() => toggleStatus(s.id)} className="flex-1">Toggle</Button>
+                </div>
+              </div>
+            )}
+          />
+        )}
       </Card>
     </div>
   );
@@ -1444,90 +1468,104 @@ function FinancialsPage() {
       </div>
 
       {/* Metrics Row */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 sm:gap-5">
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 sm:gap-5">
         <StatCard
-          title="Total Gross Revenue"
+          title="Total Revenue"
           value={`₹${totalRevenue.toFixed(2)}`}
-          subtitle="Processed through UPI & Cash"
+          subtitle="UPI & Cash"
           icon={CreditCard}
           iconBg="bg-emerald-50 text-emerald-600 border border-emerald-100"
         />
         <StatCard
-          title="Total Call Duration"
+          title="Call Duration"
           value={`${totalMinutes} mins`}
-          subtitle="Total platform talk time"
+          subtitle="Total talk time"
           icon={Phone}
           iconBg="bg-brand-50 text-brand-600 border border-brand-100"
         />
         <StatCard
           title="Total Orders"
           value={transactions.length}
-          subtitle="Recharge & calling orders"
+          subtitle="Recharge & calls"
           icon={Building2}
           iconBg="bg-indigo-50 text-indigo-600 border border-indigo-100"
         />
       </div>
 
-      {/* Transactions Table */}
+      {/* Transactions — Responsive Table/Cards */}
       <Card className="overflow-hidden">
-        <div className="overflow-x-auto min-w-full">
-          <table className="w-full text-left text-xs sm:text-sm">
-            <thead className="bg-slate-50/80 text-slate-600 font-semibold border-b border-slate-200/80 text-[11px] tracking-wider">
-              <tr>
-                <th className="px-4 py-3">Student & School</th>
-                <th className="px-4 py-3">Pricing Snapshot</th>
-                <th className="px-4 py-3">Duration</th>
-                <th className="px-4 py-3">Amount</th>
-                <th className="px-4 py-3">Transaction ID / Mode</th>
-                <th className="px-4 py-3">Status</th>
-                <th className="px-4 py-3 text-right">Date</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100 font-medium">
-              {transactions.length === 0 ? (
-                <tr>
-                  <td colSpan="7">
-                    <EmptyState
-                      icon={CreditCard}
-                      title="No payment transactions recorded"
-                      description="UPI and manual recharge orders will appear here."
-                    />
-                  </td>
-                </tr>
-              ) : (
-                transactions.map((tx) => (
-                  <tr key={tx.id} className="hover:bg-slate-50/60 transition-colors">
-                    <td className="px-4 py-3.5">
-                      <p className="font-bold text-slate-900">{tx.student?.name || 'Student'}</p>
-                      <p className="text-xs text-slate-500">{tx.student?.school?.name || 'School'}</p>
-                    </td>
-                    <td className="px-4 py-3.5 font-mono text-slate-700">
-                      ₹{parseFloat(tx.pricePerMinute || 2.5).toFixed(2)}/min
-                    </td>
-                    <td className="px-4 py-3.5 font-mono text-slate-700">
-                      {tx.durationMinutes ? `${tx.durationMinutes} mins` : '—'}
-                    </td>
-                    <td className="px-4 py-3.5 font-bold text-slate-900 font-mono">
-                      ₹{parseFloat(tx.amount).toFixed(2)}
-                    </td>
-                    <td className="px-4 py-3.5">
-                      <p className="font-mono text-xs text-slate-600">{tx.transactionId || tx.paymentMode || 'UPI'}</p>
-                      <span className="text-[10px] text-slate-400 font-semibold uppercase">{tx.paymentGateway || tx.paymentMode}</span>
-                    </td>
-                    <td className="px-4 py-3.5">
-                      <Badge variant={tx.status === 'success' ? 'success' : tx.status === 'pending' ? 'info' : 'danger'} withDot>
-                        {tx.status || 'success'}
-                      </Badge>
-                    </td>
-                    <td className="px-4 py-3.5 text-right text-slate-500 text-xs">
-                      {new Date(tx.createdAt).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' })}
-                    </td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
+        {transactions.length === 0 ? (
+          <EmptyState
+            icon={CreditCard}
+            title="No payment transactions recorded"
+            description="UPI and manual recharge orders will appear here."
+          />
+        ) : (
+          <ResponsiveTable
+            columns={[
+              { key: 'student', label: 'Student & School' },
+              { key: 'pricing', label: 'Rate', hideOnMobile: true },
+              { key: 'duration', label: 'Duration', hideOnMobile: true },
+              { key: 'amount', label: 'Amount' },
+              { key: 'txId', label: 'Transaction ID', hideOnMobile: true },
+              { key: 'status', label: 'Status' },
+              { key: 'date', label: 'Date', className: 'text-right' },
+            ]}
+            data={transactions}
+            keyField="id"
+            renderCell={(tx, col) => {
+              switch (col.key) {
+                case 'student': return (
+                  <div>
+                    <p className="font-bold text-slate-900">{tx.student?.name || 'Student'}</p>
+                    <p className="text-xs text-slate-500">{tx.student?.school?.name || 'School'}</p>
+                  </div>
+                );
+                case 'pricing': return <span className="font-mono text-slate-700">₹{parseFloat(tx.pricePerMinute || 2.5).toFixed(2)}/min</span>;
+                case 'duration': return <span className="font-mono text-slate-700">{tx.durationMinutes ? `${tx.durationMinutes} mins` : '—'}</span>;
+                case 'amount': return <span className="font-bold text-slate-900 font-mono">₹{parseFloat(tx.amount).toFixed(2)}</span>;
+                case 'txId': return (
+                  <div>
+                    <p className="font-mono text-xs text-slate-600">{tx.transactionId || tx.paymentMode || 'UPI'}</p>
+                    <span className="text-[10px] text-slate-400 font-semibold uppercase">{tx.paymentGateway || tx.paymentMode}</span>
+                  </div>
+                );
+                case 'status': return <Badge variant={tx.status === 'success' ? 'success' : tx.status === 'pending' ? 'info' : 'danger'} withDot>{tx.status || 'success'}</Badge>;
+                case 'date': return <span className="text-slate-500 text-xs">{new Date(tx.createdAt).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' })}</span>;
+                default: return null;
+              }
+            }}
+            renderMobileCard={(tx) => (
+              <div className="bg-white rounded-xl border border-slate-200/90 shadow-card overflow-hidden">
+                <div className="px-4 py-3 flex items-center justify-between gap-3 border-b border-slate-100">
+                  <div className="min-w-0">
+                    <p className="font-bold text-sm text-slate-900 truncate">{tx.student?.name || 'Student'}</p>
+                    <p className="text-[11px] text-slate-500">{tx.student?.school?.name || 'School'}</p>
+                  </div>
+                  <Badge variant={tx.status === 'success' ? 'success' : tx.status === 'pending' ? 'info' : 'danger'} withDot>{tx.status || 'success'}</Badge>
+                </div>
+                <div className="divide-y divide-slate-100">
+                  <div className="flex items-center justify-between px-4 py-2">
+                    <span className="text-[11px] font-semibold text-slate-500 uppercase">Amount</span>
+                    <span className="text-sm font-bold text-slate-900 font-mono">₹{parseFloat(tx.amount).toFixed(2)}</span>
+                  </div>
+                  <div className="flex items-center justify-between px-4 py-2">
+                    <span className="text-[11px] font-semibold text-slate-500 uppercase">Rate</span>
+                    <span className="text-sm font-mono text-slate-700">₹{parseFloat(tx.pricePerMinute || 2.5).toFixed(2)}/min</span>
+                  </div>
+                  <div className="flex items-center justify-between px-4 py-2">
+                    <span className="text-[11px] font-semibold text-slate-500 uppercase">Duration</span>
+                    <span className="text-sm font-mono text-slate-700">{tx.durationMinutes ? `${tx.durationMinutes} mins` : '—'}</span>
+                  </div>
+                  <div className="flex items-center justify-between px-4 py-2">
+                    <span className="text-[11px] font-semibold text-slate-500 uppercase">Date</span>
+                    <span className="text-xs text-slate-500">{new Date(tx.createdAt).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' })}</span>
+                  </div>
+                </div>
+              </div>
+            )}
+          />
+        )}
       </Card>
     </div>
   );
@@ -1542,54 +1580,26 @@ export default function SuperAdminDashboard() {
   }
 
   const links = [
-    { to: '/superadmin', label: 'Overview', icon: Building2 },
+    { to: '/superadmin', label: 'Overview', icon: LayoutDashboard },
     { to: '/superadmin/schools', label: 'Schools', icon: Building2 },
     { to: '/superadmin/students', label: 'Students & Parents', icon: Users },
     { to: '/superadmin/transactions', label: 'Financials & Calls', icon: CreditCard },
   ];
 
   return (
-    <div className="flex min-h-screen bg-slate-50">
-      {/* Desktop Persistent Sidebar */}
-      <Sidebar />
-
-      {/* Mobile Off-canvas Drawer */}
-      <MobileNavDrawer
-        isOpen={mobileDrawerOpen}
-        onClose={() => setMobileDrawerOpen(false)}
-        links={links}
-        title="Super Admin Panel"
-        subtitle={user?.name || user?.email}
-      />
-
-      <div className="flex-1 flex flex-col min-w-0">
-        {/* Mobile Header Bar */}
-        <header className="lg:hidden h-14 bg-slate-900 text-white px-4 flex items-center justify-between border-b border-slate-800 sticky top-0 z-30">
-          <div className="flex items-center gap-3">
-            <button
-              onClick={() => setMobileDrawerOpen(true)}
-              className="p-1.5 text-slate-300 hover:text-white rounded-lg hover:bg-slate-800 transition"
-              aria-label="Open Navigation Menu"
-            >
-              <Menu size={20} />
-            </button>
-            <span className="font-bold text-sm">Super Admin</span>
-          </div>
-          <button onClick={logout} className="p-1.5 text-rose-400 hover:text-rose-300 text-xs font-semibold">
-            Sign Out
-          </button>
-        </header>
-
-        {/* Main Content Area */}
-        <main className="flex-1 p-4 sm:p-6 lg:p-8 max-w-6xl w-full mx-auto">
-          <Routes>
-            <Route path="/" element={<DashboardHome />} />
-            <Route path="/schools" element={<SchoolsPage />} />
-            <Route path="/students" element={<StudentsPage />} />
-            <Route path="/transactions" element={<FinancialsPage />} />
-          </Routes>
-        </main>
+    <DashboardLayout
+      navLinks={links}
+      title="Super Admin Dashboard"
+      subtitle="Hostel Calling Platform & Institution Administration"
+    >
+      <div className="max-w-6xl mx-auto">
+        <Routes>
+          <Route path="/" element={<DashboardHome />} />
+          <Route path="/schools" element={<SchoolsPage />} />
+          <Route path="/students" element={<StudentsPage />} />
+          <Route path="/transactions" element={<FinancialsPage />} />
+        </Routes>
       </div>
-    </div>
+    </DashboardLayout>
   );
 }

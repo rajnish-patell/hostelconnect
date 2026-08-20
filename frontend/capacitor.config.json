@@ -1,0 +1,9 @@
+{
+  "appId": "app.vercel.hostelvideocall",
+  "appName": "Hostel Video Call",
+  "webDir": "dist",
+  "server": {
+    "url": "https://hostel-video-call-app.vercel.app",
+    "cleartext": true
+  }
+}

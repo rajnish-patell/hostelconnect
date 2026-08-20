@@ -1,8 +1,8 @@
-import { useState } from 'react';
+import { useState, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
   X, CheckCircle2, ShieldCheck, Smartphone, 
-  CreditCard, ArrowRight, Loader2, IndianRupee, QrCode, Lock
+  CreditCard, ArrowRight, Loader2, IndianRupee, QrCode, Lock, AlertTriangle
 } from 'lucide-react';
 import Button from './ui/Button';
 import Badge from './ui/Badge';
@@ -14,8 +14,8 @@ export default function UpiPaymentModal({
   onPaymentSuccess,
   isProcessing,
 }) {
-  const [selectedMethod, setSelectedMethod] = useState('upi_apps'); // 'upi_apps', 'qr_code', 'razorpay'
   const [paying, setPaying] = useState(false);
+  const [paymentError, setPaymentError] = useState(null);
 
   if (!isOpen || !orderDetails) return null;
 
@@ -28,82 +28,132 @@ export default function UpiPaymentModal({
     amount,
     razorpayOrderId,
     razorpayKeyId,
-    upiDeepLink,
+    razorpayConfigured,
   } = orderDetails;
 
-  const handleSimulateUpiPay = async (appName) => {
-    setPaying(true);
-    // Simulate instantaneous UPI intent completion and verify on server
-    setTimeout(async () => {
-      const mockPayId = `pay_upi_${appName.toLowerCase()}_${Date.now()}`;
-      await onPaymentSuccess({
-        rechargeId,
-        razorpayPaymentId: mockPayId,
-        razorpayOrderId,
-        razorpaySignature: 'verified_upi_signature',
-      });
-      setPaying(false);
-    }, 1200);
-  };
+  // ── Real Razorpay Standard Checkout ──────────────────────────────────────
+  const openRazorpayCheckout = useCallback((preferredMethod) => {
+    setPaymentError(null);
 
-  const handleRazorpayStandard = () => {
-    // If window.Razorpay exists and key is set, open standard Razorpay Checkout
-    if (window.Razorpay && razorpayKeyId && razorpayKeyId !== 'rzp_test_hostel_calling') {
-      const options = {
-        key: razorpayKeyId,
-        amount: Math.round(amount * 100),
-        currency: 'INR',
-        name: schoolName,
-        description: `Video Call with ${studentName} (${durationMinutes} mins)`,
-        order_id: razorpayOrderId,
-        handler: function (response) {
-          onPaymentSuccess({
-            rechargeId,
-            razorpayPaymentId: response.razorpay_payment_id,
-            razorpayOrderId: response.razorpay_order_id,
-            razorpaySignature: response.razorpay_signature,
-          });
-        },
-        prefill: {
-          name: studentName,
-        },
-        theme: {
-          color: '#2563eb',
-        },
-      };
-      const rzp = new window.Razorpay(options);
-      rzp.open();
-    } else {
-      // Direct instant UPI gateway confirmation
-      handleSimulateUpiPay('Razorpay_UPI');
+    // Check if Razorpay SDK is loaded and configured
+    if (!window.Razorpay) {
+      setPaymentError('Payment gateway is loading. Please try again.');
+      return;
     }
-  };
+
+    if (!razorpayKeyId || !razorpayConfigured) {
+      setPaymentError('Payment gateway is not configured. Please contact the administrator.');
+      return;
+    }
+
+    setPaying(true);
+
+    const options = {
+      key: razorpayKeyId,
+      amount: Math.round(parseFloat(amount) * 100), // in paise
+      currency: 'INR',
+      name: schoolName || 'Hostel Video Call',
+      description: `Video Call with ${studentName} (${durationMinutes} mins)`,
+      order_id: razorpayOrderId,
+      handler: function (response) {
+        // Payment successful — verify on server
+        setPaying(false);
+        onPaymentSuccess({
+          rechargeId,
+          razorpayPaymentId: response.razorpay_payment_id,
+          razorpayOrderId: response.razorpay_order_id,
+          razorpaySignature: response.razorpay_signature,
+        });
+      },
+      prefill: {
+        name: studentName || '',
+      },
+      notes: {
+        rechargeId: String(rechargeId),
+        studentName,
+        durationMinutes: String(durationMinutes),
+      },
+      theme: {
+        color: '#2563eb',
+        backdrop_color: 'rgba(15, 23, 42, 0.6)',
+      },
+      modal: {
+        ondismiss: function () {
+          setPaying(false);
+          setPaymentError('Payment was cancelled. You can try again.');
+        },
+        escape: true,
+        animation: true,
+      },
+      // Preferred payment method
+      ...(preferredMethod === 'upi' ? {
+        config: {
+          display: {
+            blocks: {
+              upi: {
+                name: 'Pay via UPI',
+                instruments: [
+                  { method: 'upi', flows: ['qrcode', 'collect', 'intent'] },
+                ],
+              },
+            },
+            sequence: ['block.upi'],
+            preferences: {
+              show_default_blocks: true,
+            },
+          },
+        },
+      } : {}),
+    };
+
+    try {
+      const rzp = new window.Razorpay(options);
+
+      rzp.on('payment.failed', function (response) {
+        setPaying(false);
+        const errorDesc = response.error?.description || 'Payment failed. Please try again.';
+        setPaymentError(errorDesc);
+      });
+
+      rzp.open();
+    } catch (err) {
+      setPaying(false);
+      setPaymentError('Failed to open payment gateway. Please try again.');
+      console.error('Razorpay open error:', err);
+    }
+  }, [razorpayKeyId, razorpayConfigured, razorpayOrderId, amount, schoolName, studentName, durationMinutes, rechargeId, onPaymentSuccess]);
 
   return (
     <AnimatePresence>
-      <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 overflow-y-auto">
         {/* Backdrop */}
         <motion.div
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
-          onClick={onClose}
+          onClick={paying ? undefined : onClose}
           className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs"
         />
 
         {/* Modal Window */}
         <motion.div
-          initial={{ opacity: 0, scale: 0.95, y: 10 }}
-          animate={{ opacity: 1, scale: 1, y: 0 }}
-          exit={{ opacity: 0, scale: 0.95, y: 10 }}
-          className="relative w-full max-w-md bg-white rounded-3xl shadow-2xl border border-slate-200 overflow-hidden z-10"
+          initial={{ y: '100%', opacity: 0.8 }}
+          animate={{ y: 0, opacity: 1 }}
+          exit={{ y: '100%', opacity: 0.8 }}
+          transition={{ type: 'spring', damping: 28, stiffness: 280 }}
+          className="relative w-full max-w-md bg-white rounded-t-3xl sm:rounded-3xl shadow-2xl border border-slate-200 overflow-hidden z-10 max-h-[92vh] flex flex-col"
         >
           {/* Header */}
-          <div className="bg-gradient-to-r from-slate-900 to-slate-800 text-white p-5 sm:p-6 relative">
+          <div className="bg-gradient-to-r from-slate-900 to-slate-800 text-white p-4 sm:p-6 relative shrink-0">
+            {/* Mobile Drag Pill */}
+            <div className="flex justify-center mb-2 sm:hidden">
+              <div className="w-10 h-1 bg-slate-600 rounded-full" />
+            </div>
+
             <button
               onClick={onClose}
               disabled={paying || isProcessing}
-              className="absolute top-4 right-4 p-1.5 text-slate-400 hover:text-white rounded-full hover:bg-white/10 transition"
+              className="absolute top-4 right-4 p-2 text-slate-400 hover:text-white rounded-full hover:bg-white/10 transition touch-target-44 flex items-center justify-center"
               aria-label="Close"
             >
               <X size={18} />
@@ -111,7 +161,7 @@ export default function UpiPaymentModal({
 
             <div className="flex items-center gap-2 mb-1">
               <Badge variant="brand" className="bg-brand-500/20 text-brand-200 border-brand-400/30">
-                Secure UPI Gateway
+                Secure Payment Gateway
               </Badge>
               <span className="text-xs text-slate-400 font-mono">• 256-bit Encrypted</span>
             </div>
@@ -133,105 +183,83 @@ export default function UpiPaymentModal({
           </div>
 
           {/* Body */}
-          <div className="p-5 sm:p-6 space-y-4">
+          <div className="p-4 sm:p-6 space-y-4 overflow-y-auto flex-1">
             {/* Student Info Card */}
             <div className="bg-slate-50 border border-slate-200/80 rounded-2xl p-3.5 flex items-center justify-between text-xs">
               <span className="font-semibold text-slate-600">Child / Student:</span>
               <span className="font-bold text-slate-900">{studentName}</span>
             </div>
 
-            {/* Method Tabs */}
-            <div className="grid grid-cols-2 gap-1.5 p-1 bg-slate-100 rounded-xl border border-slate-200/80">
-              <button
-                type="button"
-                onClick={() => setSelectedMethod('upi_apps')}
-                className={`py-2 text-xs font-bold rounded-lg transition ${
-                  selectedMethod === 'upi_apps'
-                    ? 'bg-white text-slate-900 shadow-sm'
-                    : 'text-slate-500 hover:text-slate-800'
-                }`}
-              >
-                UPI Apps / GPay
-              </button>
-              <button
-                type="button"
-                onClick={() => setSelectedMethod('qr_code')}
-                className={`py-2 text-xs font-bold rounded-lg transition ${
-                  selectedMethod === 'qr_code'
-                    ? 'bg-white text-slate-900 shadow-sm'
-                    : 'text-slate-500 hover:text-slate-800'
-                }`}
-              >
-                Scan UPI QR
-              </button>
-            </div>
-
-            {/* Content for UPI Apps */}
-            {selectedMethod === 'upi_apps' && (
-              <div className="space-y-2.5 pt-1">
-                <p className="text-xs font-semibold text-slate-700">Choose your preferred UPI app:</p>
-
-                {[
-                  { name: 'Google Pay', badge: 'Fastest', color: 'text-blue-600', bg: 'bg-blue-50' },
-                  { name: 'PhonePe', badge: 'Instant', color: 'text-purple-600', bg: 'bg-purple-50' },
-                  { name: 'Paytm UPI', badge: 'Secure', color: 'text-sky-600', bg: 'bg-sky-50' },
-                  { name: 'BHIM / Any UPI App', badge: 'Standard', color: 'text-emerald-600', bg: 'bg-emerald-50' },
-                ].map((app) => (
-                  <button
-                    key={app.name}
-                    type="button"
-                    disabled={paying || isProcessing}
-                    onClick={() => handleSimulateUpiPay(app.name)}
-                    className="w-full p-3 bg-white hover:bg-slate-50 border border-slate-200 hover:border-brand-500 rounded-xl flex items-center justify-between transition cursor-pointer group shadow-xs active:scale-98"
-                  >
-                    <div className="flex items-center gap-3">
-                      <div className={`w-8 h-8 rounded-lg ${app.bg} ${app.color} flex items-center justify-center font-extrabold text-sm`}>
-                        <Smartphone size={16} />
-                      </div>
-                      <span className="font-bold text-xs text-slate-800">{app.name}</span>
-                    </div>
-
-                    <div className="flex items-center gap-2">
-                      <span className="text-[10px] font-semibold text-slate-400 group-hover:text-brand-600">{app.badge}</span>
-                      <ArrowRight size={14} className="text-slate-400 group-hover:text-brand-600 group-hover:translate-x-0.5 transition" />
-                    </div>
-                  </button>
-                ))}
+            {/* Error Message */}
+            {paymentError && (
+              <div className="bg-red-50 border border-red-200 rounded-xl p-3 flex items-start gap-2">
+                <AlertTriangle size={16} className="text-red-500 shrink-0 mt-0.5" />
+                <div>
+                  <p className="text-xs font-semibold text-red-800">{paymentError}</p>
+                </div>
               </div>
             )}
 
-            {/* Content for QR Code */}
-            {selectedMethod === 'qr_code' && (
-              <div className="pt-2 flex flex-col items-center justify-center text-center space-y-3">
-                <div className="p-3 bg-white border-2 border-dashed border-slate-300 rounded-2xl shadow-sm">
-                  {/* Dynamic SVG QR representation */}
-                  <div className="w-36 h-36 bg-slate-900 rounded-xl flex flex-col items-center justify-center p-3 text-white">
-                    <QrCode size={90} className="text-white" />
-                    <span className="text-[10px] font-mono mt-1 text-emerald-400">Scan & Pay ₹{amount}</span>
+            {/* Payment Options */}
+            <div className="space-y-2.5 pt-1">
+              <p className="text-xs font-semibold text-slate-700">Choose payment method:</p>
+
+              {/* UPI Payment Button */}
+              <button
+                type="button"
+                disabled={paying || isProcessing}
+                onClick={() => openRazorpayCheckout('upi')}
+                className="w-full p-3.5 bg-white hover:bg-slate-50 border border-slate-200 hover:border-brand-500 rounded-xl flex items-center justify-between transition cursor-pointer group shadow-xs active:scale-98 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <div className="flex items-center gap-3">
+                  <div className="w-9 h-9 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center font-extrabold text-sm">
+                    <Smartphone size={18} />
+                  </div>
+                  <div className="text-left">
+                    <span className="font-bold text-xs text-slate-800 block">UPI / GPay / PhonePe</span>
+                    <span className="text-[10px] text-slate-400">Instant bank transfer</span>
                   </div>
                 </div>
-
-                <div className="space-y-1">
-                  <p className="text-xs font-bold text-slate-800">Scan using any UPI App</p>
-                  <p className="text-[11px] text-slate-500">Scan via GPay, PhonePe, Paytm or BHIM to pay</p>
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] font-semibold text-emerald-600 group-hover:text-brand-600">Recommended</span>
+                  <ArrowRight size={14} className="text-slate-400 group-hover:text-brand-600 group-hover:translate-x-0.5 transition" />
                 </div>
+              </button>
 
-                <Button
-                  variant="primary"
-                  size="md"
-                  onClick={() => handleSimulateUpiPay('QR_Scan')}
-                  isLoading={paying || isProcessing}
-                  className="w-full"
-                >
-                  I Have Completed Payment
-                </Button>
+              {/* Cards / NetBanking / All Methods */}
+              <button
+                type="button"
+                disabled={paying || isProcessing}
+                onClick={() => openRazorpayCheckout('all')}
+                className="w-full p-3.5 bg-white hover:bg-slate-50 border border-slate-200 hover:border-brand-500 rounded-xl flex items-center justify-between transition cursor-pointer group shadow-xs active:scale-98 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <div className="flex items-center gap-3">
+                  <div className="w-9 h-9 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center font-extrabold text-sm">
+                    <CreditCard size={18} />
+                  </div>
+                  <div className="text-left">
+                    <span className="font-bold text-xs text-slate-800 block">Cards / Net Banking / Wallet</span>
+                    <span className="text-[10px] text-slate-400">Debit, Credit, or Net Banking</span>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <ArrowRight size={14} className="text-slate-400 group-hover:text-brand-600 group-hover:translate-x-0.5 transition" />
+                </div>
+              </button>
+            </div>
+
+            {/* Loading State */}
+            {paying && (
+              <div className="flex items-center justify-center gap-2 py-3">
+                <Loader2 size={16} className="text-brand-600 animate-spin" />
+                <span className="text-xs font-semibold text-slate-600">Processing payment...</span>
               </div>
             )}
 
             {/* Security Badge */}
             <div className="pt-2 flex items-center justify-center gap-1.5 text-[11px] text-slate-400">
               <Lock size={12} className="text-emerald-500" />
-              <span>Direct Bank-to-School UPI Settlement</span>
+              <span>Powered by Razorpay • PCI DSS Compliant</span>
             </div>
           </div>
         </motion.div>

@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#4f46e5" />
+      <stop offset="100%" stop-color="#312e81" />
+    </linearGradient>
+    <linearGradient id="iconGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#ffffff" />
+      <stop offset="100%" stop-color="#e0e7ff" />
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="8" stdDeviation="12" flood-color="#000000" flood-opacity="0.3" />
+    </filter>
+  </defs>
+
+  <!-- Background Card -->
+  <rect width="512" height="512" rx="112" fill="url(#bgGrad)" />
+
+  <!-- Outer Decorative Ring -->
+  <circle cx="256" cy="256" r="180" fill="none" stroke="#818cf8" stroke-width="4" stroke-opacity="0.25" />
+
+  <!-- Video Camera Icon -->
+  <g filter="url(#shadow)" transform="translate(116, 126)">
+    <!-- Main Camera Body -->
+    <rect x="0" y="40" width="180" height="180" rx="36" fill="url(#iconGrad)" />
+    
+    <!-- Camera Lens Cone -->
+    <path d="M 200 80 L 270 30 C 278 24 288 30 288 40 L 288 220 C 288 230 278 236 270 230 L 200 180 Z" fill="url(#iconGrad)" />
+    
+    <!-- Lens Reflection Dot -->
+    <circle cx="90" cy="130" r="32" fill="#4f46e5" opacity="0.15" />
+    
+    <!-- Signal Pulse Wave -->
+    <path d="M 50 130 A 40 40 0 0 1 130 130" fill="none" stroke="#4f46e5" stroke-width="12" stroke-linecap="round" />
+  </g>
+
+  <!-- Hostel Roof Badge Accent -->
+  <path d="M 256 60 L 320 100 L 192 100 Z" fill="#818cf8" opacity="0.4" />
+</svg>

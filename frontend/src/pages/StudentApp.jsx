@@ -1,17 +1,19 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import toast from 'react-hot-toast';
-import { Phone, Wallet, History, LogOut, User, Video, Clock, PhoneCall, RefreshCw, MessageSquare } from 'lucide-react';
+import { Phone, Wallet, History, LogOut, User, Video, Clock, PhoneCall, RefreshCw, MessageSquare, LayoutDashboard } from 'lucide-react';
 import api from '../api';
 import { getUser, logout } from '../utils/auth';
+import DashboardLayout from '../components/DashboardLayout';
 import NativeVideoRoom from '../components/NativeVideoRoom';
+import IncomingCallModal from '../components/IncomingCallModal';
 import Button from '../components/ui/Button';
 import Badge from '../components/ui/Badge';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '../components/ui/Card';
 import EmptyState from '../components/ui/EmptyState';
 
 export default function StudentApp() {
-  const user = getUser();
+  const user = useMemo(() => getUser(), []);
   const [wallet, setWallet] = useState(0);
   const [parents, setParents] = useState([]);
   const [history, setHistory] = useState([]);
@@ -46,18 +48,34 @@ export default function StudentApp() {
     }
 
     fetchHistory();
-  }, [user, fetchHistory]);
+  }, [user?.id, fetchHistory]);
 
+  // Initial load only when student ID is available
   useEffect(() => {
-    loadData();
-  }, [loadData]);
+    if (user?.id) {
+      loadData();
+    }
+  }, [user?.id]);
 
-  // Re-fetch call history whenever the user switches to the history tab
-  useEffect(() => {
-    if (activeTab === 'history') {
+  // Re-fetch call history ONLY when switching to history tab
+  const handleTabChange = (tab) => {
+    setActiveTab(tab);
+    if (tab === 'history') {
       fetchHistory();
     }
-  }, [activeTab, fetchHistory]);
+  };
+
+  const [incomingCallModalOpen, setIncomingCallModalOpen] = useState(false);
+
+  const handleAcceptStudentCall = () => {
+    setIncomingCallModalOpen(false);
+    setInCall(true);
+  };
+
+  const handleDeclineStudentCall = () => {
+    setIncomingCallModalOpen(false);
+    toast.error('Call declined');
+  };
 
   const startVideoCall = async (parentLink) => {
     const parent = parentLink.parent || parentLink;
@@ -66,6 +84,8 @@ export default function StudentApp() {
       return;
     }
 
+    setSelectedParent(parent);
+
     try {
       const res = await api.post('/calls/initiate', {
         parentId: parent.id,
@@ -73,7 +93,6 @@ export default function StudentApp() {
 
       const callSession = res.data.data;
       setActiveCallSession(callSession);
-      setSelectedParent(parent);
       setInCall(true);
       toast.success(`Calling ${parent.name}...`);
     } catch (err) {
@@ -85,10 +104,11 @@ export default function StudentApp() {
     setInCall(false);
     if (activeCallSession) {
       try {
-        const res = await api.post(`/calls/${activeCallSession.id}/end`, {
+        const res = await api.post(`/calls/${activeCallSession.callId || activeCallSession.id}/end`, {
           durationSeconds,
         });
-        toast.success(`Call ended (${Math.floor(durationSeconds / 60)}m ${durationSeconds % 60}s). Charged: ₹${res.data.data?.chargeAmount || 0}`);
+        const charged = res.data.data?.chargeAmount || 0;
+        toast.success(`Call ended (${Math.floor(durationSeconds / 60)}m ${durationSeconds % 60}s). Charged: ₹${charged}`);
       } catch {
         toast.success(`Call ended (${Math.floor(durationSeconds / 60)}m ${durationSeconds % 60}s)`);
       }
@@ -140,66 +160,51 @@ export default function StudentApp() {
     );
   }
 
+  const links = [
+    { to: '/student', label: 'Call Family', icon: Video },
+    { to: '/student', label: 'Wallet Balance', icon: Wallet },
+    { to: '/student', label: 'Call History', icon: History },
+  ];
+
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-900 pb-20">
-      {/* Top Header */}
-      <header className="bg-white border-b border-slate-200/90 sticky top-0 z-30 shadow-xs">
-        <div className="max-w-4xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between gap-4">
-          <div className="flex items-center gap-3 min-w-0">
-            <div className="w-9 h-9 rounded-xl bg-brand-600 flex items-center justify-center text-white shrink-0 shadow-sm">
-              <Video size={18} />
-            </div>
-            <div className="truncate">
-              <h1 className="font-bold text-sm sm:text-base leading-tight text-slate-900 truncate">
-                {user?.name || 'Student Portal'}
-              </h1>
-              <p className="text-xs text-slate-500 font-mono font-medium truncate">{user?.studentId || 'STU001'}</p>
-            </div>
-          </div>
+    <DashboardLayout
+      navLinks={links}
+      title="Student Video Call Kiosk"
+      subtitle={`${user?.name || 'Student'} (ID: ${user?.studentId || 'STU001'})`}
+    >
+      <div className="max-w-4xl mx-auto space-y-4 sm:space-y-6">
+        {/* Incoming Call Modal */}
+        <IncomingCallModal
+          isOpen={incomingCallModalOpen}
+          callerName={selectedParent?.name || 'Parent'}
+          callerRole="Parent"
+          onAccept={handleAcceptStudentCall}
+          onDecline={handleDeclineStudentCall}
+        />
 
-          <div className="flex items-center gap-3 shrink-0">
-            <div className="bg-slate-100 border border-slate-200/90 px-3.5 py-1.5 rounded-xl flex items-center gap-2 text-xs sm:text-sm font-bold text-slate-800 font-mono">
-              <Wallet size={15} className="text-brand-600" />
-              <span>₹{wallet.toFixed(2)}</span>
-            </div>
-            <Button
-              variant="ghost"
-              size="sm"
-              icon={LogOut}
-              onClick={logout}
-              className="text-slate-500 hover:text-slate-800"
-            >
-              Sign Out
-            </Button>
-          </div>
-        </div>
-      </header>
-
-      {/* Main Container */}
-      <main className="max-w-4xl mx-auto px-4 sm:px-6 pt-6 space-y-6">
         {/* Banner Card */}
-        <div className="bg-white rounded-2xl p-5 sm:p-6 border border-slate-200/90 shadow-card flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div className="bg-white rounded-2xl p-4 sm:p-6 border border-slate-200/90 shadow-card flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-4">
           <div className="space-y-1">
             <Badge variant="brand" withDot>HD Video Calling & Chat</Badge>
-            <h2 className="text-lg sm:text-xl font-bold text-slate-900 tracking-tight mt-1">Connect with Family</h2>
+            <h2 className="text-base sm:text-xl font-bold text-slate-900 tracking-tight mt-1">Connect with Family</h2>
             <p className="text-xs sm:text-sm text-slate-500 max-w-md leading-relaxed">
               Start direct WebRTC video calls and live messaging with registered parent and guardian contacts.
             </p>
           </div>
 
-          <div className="bg-slate-50 border border-slate-200/80 p-4 rounded-xl flex items-center gap-3 shrink-0">
-            <div className="w-10 h-10 rounded-xl bg-brand-50 text-brand-600 flex items-center justify-center shrink-0">
-              <Wallet size={20} />
+          <div className="bg-slate-50 border border-slate-200/80 p-3 sm:p-4 rounded-xl flex items-center gap-3 shrink-0">
+            <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-brand-50 text-brand-600 flex items-center justify-center shrink-0">
+              <Wallet size={18} />
             </div>
             <div>
-              <p className="text-[11px] font-semibold text-slate-500">Available Balance</p>
-              <p className="text-lg font-extrabold text-slate-900 font-mono">₹{wallet.toFixed(2)}</p>
+              <p className="text-[10px] sm:text-[11px] font-semibold text-slate-500">Available Balance</p>
+              <p className="text-base sm:text-lg font-extrabold text-slate-900 font-mono">₹{wallet.toFixed(2)}</p>
             </div>
           </div>
         </div>
 
         {/* Tab Controls */}
-        <div className="grid grid-cols-3 gap-1 p-1.5 bg-slate-100 rounded-2xl border border-slate-200/80 max-w-xl mx-auto">
+        <div className="grid grid-cols-3 gap-1 p-1 bg-slate-100 rounded-2xl border border-slate-200/80 max-w-xl mx-auto">
           {[
             { id: 'call', label: 'Call Parent', icon: PhoneCall },
             { id: 'chat', label: 'Live Chat', icon: MessageSquare },
@@ -212,7 +217,7 @@ export default function StudentApp() {
                 key={tab.id}
                 type="button"
                 onClick={() => setActiveTab(tab.id)}
-                className={`relative py-2.5 px-3 sm:px-4 text-xs sm:text-sm font-semibold rounded-xl transition-colors cursor-pointer flex items-center justify-center gap-2 select-none ${
+                className={`relative py-2.5 px-1.5 sm:px-4 text-xs sm:text-sm font-semibold rounded-xl transition-colors cursor-pointer flex items-center justify-center gap-1.5 select-none touch-manipulation min-h-[44px] ${
                   isSelected ? 'text-slate-900 font-bold' : 'text-slate-500 hover:text-slate-800'
                 }`}
               >
@@ -223,9 +228,9 @@ export default function StudentApp() {
                     transition={{ type: 'spring', stiffness: 500, damping: 35 }}
                   />
                 )}
-                <span className="relative z-10 flex items-center justify-center gap-2 truncate">
-                  <Icon size={16} className={isSelected ? 'text-brand-600' : 'text-slate-400'} />
-                  <span className="truncate">{tab.label}</span>
+                <span className="relative z-10 flex items-center justify-center gap-1.5 truncate">
+                  <Icon size={15} className={`shrink-0 ${isSelected ? 'text-brand-600' : 'text-slate-400'}`} />
+                  <span className="truncate text-[11px] sm:text-xs md:text-sm">{tab.label}</span>
                 </span>
               </button>
             );
@@ -420,7 +425,7 @@ export default function StudentApp() {
             </motion.div>
           )}
         </AnimatePresence>
-      </main>
-    </div>
+      </div>
+    </DashboardLayout>
   );
 }

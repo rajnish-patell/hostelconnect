@@ -1,18 +1,19 @@
 import React from 'react';
 
 const variants = {
-  primary: 'bg-brand-600 hover:bg-brand-700 text-white shadow-sm hover:shadow active:scale-[0.98] border border-transparent focus:ring-2 focus:ring-brand-500 focus:ring-offset-2',
-  secondary: 'bg-white hover:bg-slate-50 text-slate-700 border border-slate-300 shadow-sm active:scale-[0.98] focus:ring-2 focus:ring-slate-300 focus:ring-offset-2',
-  outline: 'bg-transparent hover:bg-slate-100 text-slate-700 border border-slate-300 active:scale-[0.98] focus:ring-2 focus:ring-slate-300',
-  ghost: 'bg-transparent hover:bg-slate-100 text-slate-600 hover:text-slate-900 active:scale-[0.98]',
-  destructive: 'bg-rose-600 hover:bg-rose-700 text-white shadow-sm hover:shadow active:scale-[0.98] border border-transparent focus:ring-2 focus:ring-rose-500 focus:ring-offset-2',
-  success: 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm hover:shadow active:scale-[0.98] border border-transparent focus:ring-2 focus:ring-emerald-500 focus:ring-offset-2',
+  primary: 'bg-[#00A76F] hover:bg-[#007849] text-white shadow-[0_8px_16px_0_rgba(0,167,111,0.24)] active:scale-[0.98] border border-transparent font-bold focus:ring-2 focus:ring-[#00A76F]/40',
+  secondary: 'bg-[#919EAB]/8 hover:bg-[#919EAB]/16 text-[#1C252E] font-bold active:scale-[0.98] focus:ring-2 focus:ring-slate-300',
+  outline: 'bg-transparent hover:bg-[#919EAB]/8 text-[#1C252E] border border-[rgba(145,158,171,0.32)] font-semibold active:scale-[0.98]',
+  ghost: 'bg-transparent hover:bg-[#919EAB]/8 text-[#637381] hover:text-[#1C252E] font-semibold active:scale-[0.98]',
+  destructive: 'bg-[#FF5630] hover:bg-[#B71D18] text-white shadow-[0_8px_16px_0_rgba(255,86,48,0.24)] font-bold active:scale-[0.98]',
+  success: 'bg-[#00A76F] hover:bg-[#007849] text-white shadow-[0_8px_16px_0_rgba(0,167,111,0.24)] font-bold active:scale-[0.98]',
+  soft: 'bg-[#00A76F]/12 text-[#007849] hover:bg-[#00A76F]/20 font-bold active:scale-[0.98]',
 };
 
 const sizes = {
-  sm: 'px-3 py-1.5 text-xs font-semibold rounded-lg gap-1.5',
-  md: 'px-4 py-2 text-sm font-semibold rounded-xl gap-2',
-  lg: 'px-5 py-2.5 text-base font-bold rounded-xl gap-2.5',
+  sm: 'px-3 py-1.5 text-xs font-semibold rounded-lg gap-1.5 min-h-[36px] sm:min-h-[32px]',
+  md: 'px-4 py-2 text-sm font-bold rounded-xl gap-2 min-h-[44px] sm:min-h-[38px]',
+  lg: 'px-5 py-2.5 text-base font-bold rounded-xl gap-2.5 min-h-[48px] sm:min-h-[44px]',
 };
 
 export default function Button({
@@ -32,7 +33,7 @@ export default function Button({
       type={type}
       onClick={onClick}
       disabled={disabled || isLoading}
-      className={`inline-flex items-center justify-center transition-all duration-150 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed select-none outline-none ${variants[variant] || variants.primary} ${sizes[size] || sizes.md} ${className}`}
+      className={`inline-flex items-center justify-center transition-all duration-200 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed select-none outline-none touch-manipulation ${variants[variant] || variants.primary} ${sizes[size] || sizes.md} ${className}`}
       {...props}
     >
       {isLoading ? (

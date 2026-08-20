@@ -9,14 +9,16 @@ datasource db {
 }
 
 model SuperAdmin {
-  id           Int      @id @default(autoincrement())
-  name         String
-  email        String   @unique
-  passwordHash String   @map("password_hash")
-  phone        String?
-  isActive     Boolean  @default(true) @map("is_active")
-  createdAt    DateTime @default(now()) @map("created_at")
-  updatedAt    DateTime @updatedAt @map("updated_at")
+  id                 Int       @id @default(autoincrement())
+  name               String
+  email              String    @unique
+  passwordHash       String    @map("password_hash")
+  phone              String?
+  isActive           Boolean   @default(true) @map("is_active")
+  passwordResetToken String?   @map("password_reset_token")
+  passwordResetExpiry DateTime? @map("password_reset_expiry")
+  createdAt          DateTime  @default(now()) @map("created_at")
+  updatedAt          DateTime  @updatedAt @map("updated_at")
 
   schools School[]
 
@@ -24,24 +26,26 @@ model SuperAdmin {
 }
 
 model School {
-  id                Int      @id @default(autoincrement())
-  schoolCode        String   @unique @map("school_code")
-  name              String
-  address           String?
-  contactPerson     String?  @map("contact_person")
-  contactPhone      String?  @map("contact_phone")
-  contactEmail      String?  @map("contact_email")
-  logoUrl           String?  @map("logo_url")
-  isActive          Boolean  @default(true) @map("is_active")
-  callDurationMins    Int      @default(10) @map("call_duration_mins")
-  minCallDurationMins Int      @default(5) @map("min_call_duration_mins")
-  maxCallDurationMins Int      @default(60) @map("max_call_duration_mins")
-  isUnlimitedCalls    Boolean  @default(false) @map("is_unlimited_calls")
-  perMinuteCharge     Float    @default(2.50) @map("per_minute_charge")
-  passwordHash        String?  @map("password_hash") // for school login
-  createdById         Int?     @map("created_by")
-  createdAt           DateTime @default(now()) @map("created_at")
-  updatedAt           DateTime @updatedAt @map("updated_at")
+  id                  Int       @id @default(autoincrement())
+  schoolCode          String    @unique @map("school_code")
+  name                String
+  address             String?
+  contactPerson       String?   @map("contact_person")
+  contactPhone        String?   @map("contact_phone")
+  contactEmail        String?   @map("contact_email")
+  logoUrl             String?   @map("logo_url")
+  isActive            Boolean   @default(true) @map("is_active")
+  callDurationMins    Int       @default(10) @map("call_duration_mins")
+  minCallDurationMins Int       @default(5) @map("min_call_duration_mins")
+  maxCallDurationMins Int       @default(60) @map("max_call_duration_mins")
+  isUnlimitedCalls    Boolean   @default(false) @map("is_unlimited_calls")
+  perMinuteCharge     Float     @default(2.50) @map("per_minute_charge")
+  passwordHash        String?   @map("password_hash") // for school login
+  passwordResetToken  String?   @map("password_reset_token")
+  passwordResetExpiry DateTime? @map("password_reset_expiry")
+  createdById         Int?      @map("created_by")
+  createdAt           DateTime  @default(now()) @map("created_at")
+  updatedAt           DateTime  @updatedAt @map("updated_at")
 
   createdBy SuperAdmin? @relation(fields: [createdById], references: [id])
   students  Student[]
@@ -141,27 +145,36 @@ model CallSession {
 }
 
 model Recharge {
-  id              Int      @id @default(autoincrement())
-  studentId       Int      @map("student_id")
-  schoolId        Int?     @map("school_id")
-  parentId        Int?     @map("parent_id")
-  amount          Float
-  currency        String   @default("INR")
-  pricePerMinute  Float?   @map("price_per_minute")
-  durationMinutes Int?     @map("duration_minutes")
-  paymentMode     String   @map("payment_mode") // parent_app / school_cash / school_online / admin
-  transactionId   String?  @map("transaction_id")
-  paymentGateway  String?  @map("payment_gateway")
-  razorpayOrderId String?  @map("razorpay_order_id")
-  razorpayPaymentId String? @map("razorpay_payment_id")
-  status          String   @default("pending") // pending, success, failed, refunded
-  rechargedByType String   @map("recharged_by_type") // parent / school / super_admin
-  rechargedById   Int?     @map("recharged_by_id")
-  notes           String?
-  createdAt       DateTime @default(now()) @map("created_at")
+  id                Int      @id @default(autoincrement())
+  studentId         Int      @map("student_id")
+  schoolId          Int?     @map("school_id")
+  parentId          Int?     @map("parent_id")
+  amount            Float
+  currency          String   @default("INR")
+  pricePerMinute    Float?   @map("price_per_minute")
+  durationMinutes   Int?     @map("duration_minutes")
+  paymentMode       String   @map("payment_mode") // parent_app / school_cash / school_online / admin
+  transactionId     String?  @map("transaction_id")
+  paymentGateway    String?  @map("payment_gateway")
+  razorpayOrderId   String?  @map("razorpay_order_id")
+  razorpayPaymentId String?  @map("razorpay_payment_id")
+  razorpaySignature String?  @map("razorpay_signature")
+  webhookEventId    String?  @unique @map("webhook_event_id") // idempotency key for webhook processing
+  status            String   @default("pending") // pending, success, failed, refunded
+  failureReason     String?  @map("failure_reason")
+  refundId          String?  @map("refund_id")
+  refundAmount      Float?   @map("refund_amount")
+  refundStatus      String?  @map("refund_status") // null, initiated, processed, failed
+  refundedAt        DateTime? @map("refunded_at")
+  rechargedByType   String   @map("recharged_by_type") // parent / school / super_admin
+  rechargedById     Int?     @map("recharged_by_id")
+  notes             String?
+  createdAt         DateTime @default(now()) @map("created_at")
 
   student Student @relation(fields: [studentId], references: [id])
 
+  @@index([razorpayOrderId])
+  @@index([status])
   @@map("recharges")
 }
 
@@ -190,4 +203,38 @@ model PlatformSetting {
   updatedAt   DateTime @updatedAt @map("updated_at")
 
   @@map("platform_settings")
+}
+
+model AuditLog {
+  id        Int      @id @default(autoincrement())
+  userId    Int?     @map("user_id")
+  userRole  String?  @map("user_role") // superadmin / school / student / parent / system
+  action    String   // login, login_failed, payment_created, payment_verified, refund_initiated, etc.
+  entity    String?  // recharge, student, school, call_session, etc.
+  entityId  String?  @map("entity_id")
+  details   String?  // JSON string with extra context
+  ipAddress String?  @map("ip_address")
+  userAgent String?  @map("user_agent")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([userId])
+  @@index([action])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
+
+model Notification {
+  id        Int      @id @default(autoincrement())
+  userId    Int      @map("user_id")
+  userRole  String   @map("user_role") // superadmin / school / student / parent
+  title     String
+  message   String
+  type      String   @default("info") // info, success, warning, error, payment, call
+  isRead    Boolean  @default(false) @map("is_read")
+  metadata  String?  // JSON string with extra data (e.g. rechargeId, callId)
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([userId, userRole])
+  @@index([isRead])
+  @@map("notifications")
 }

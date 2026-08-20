@@ -4,17 +4,28 @@
 
 @layer base {
   * {
-    @apply border-slate-200;
+    border-color: rgba(145, 158, 171, 0.16);
   }
   html {
     scroll-behavior: smooth;
     -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation;
   }
   body {
-    @apply bg-slate-50 text-slate-900 font-sans antialiased overflow-x-hidden selection:bg-brand-500 selection:text-white;
+    @apply bg-[#F9FAFB] text-[#1C252E] font-sans antialiased overflow-x-hidden selection:bg-[#00A76F] selection:text-white;
+    padding-top: env(safe-area-inset-top, 0px);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
   }
   h1, h2, h3, h4, h5, h6 {
-    @apply font-display tracking-tight text-slate-900;
+    @apply font-display tracking-tight text-[#1C252E];
+  }
+  input, select, textarea {
+    font-size: max(16px, 1em);
+  }
+  @media (min-width: 640px) {
+    input, select, textarea {
+      font-size: inherit;
+    }
   }
 }
 
@@ -44,4 +55,68 @@
 .no-scrollbar {
   -ms-overflow-style: none;
   scrollbar-width: none;
+}
+
+/* Mobile table → card layout toggle */
+@media (max-width: 767px) {
+  .mobile-cards-only .desktop-table {
+    display: none;
+  }
+  .mobile-cards-only .mobile-card-list {
+    display: block;
+  }
+}
+@media (min-width: 768px) {
+  .mobile-cards-only .desktop-table {
+    display: block;
+  }
+  .mobile-cards-only .mobile-card-list {
+    display: none;
+  }
+}
+
+/* Touch-friendly utility */
+.touch-target-44 {
+  min-width: 44px;
+  min-height: 44px;
+}
+
+/* Bottom sheet animation */
+@keyframes slideUp {
+  from {
+    transform: translateY(100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+@keyframes slideDown {
+  from {
+    transform: translateY(0);
+    opacity: 1;
+  }
+  to {
+    transform: translateY(100%);
+    opacity: 0;
+  }
+}
+
+/* Scrollable horizontal tabs */
+.mobile-tab-scroll {
+  display: flex;
+  overflow-x: auto;
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+  scroll-snap-type: x mandatory;
+}
+.mobile-tab-scroll::-webkit-scrollbar {
+  display: none;
+}
+.mobile-tab-scroll > * {
+  scroll-snap-align: start;
+  flex-shrink: 0;
 }

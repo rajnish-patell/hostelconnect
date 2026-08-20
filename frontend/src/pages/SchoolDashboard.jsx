@@ -1,9 +1,10 @@
 import { useState, useEffect } from 'react';
 import { Routes, Route, Link, useLocation } from 'react-router-dom';
 import toast from 'react-hot-toast';
-import { Users, Phone, Wallet, LogOut, Plus, Power, UserPlus, Menu, Building, Edit2, Trash2, Coins } from 'lucide-react';
+import { Users, Phone, Wallet, LogOut, Plus, Power, UserPlus, Menu, Building, Edit2, Trash2, Coins, LayoutDashboard } from 'lucide-react';
 import api from '../api';
 import { getUser, logout } from '../utils/auth';
+import DashboardLayout from '../components/DashboardLayout';
 import MobileNavDrawer from '../components/MobileNavDrawer';
 import Button from '../components/ui/Button';
 import Input from '../components/ui/Input';
@@ -12,6 +13,7 @@ import StatCard from '../components/ui/StatCard';
 import Modal from '../components/ui/Modal';
 import { Card, CardContent } from '../components/ui/Card';
 import EmptyState from '../components/ui/EmptyState';
+import ResponsiveTable from '../components/ui/ResponsiveTable';
 import { validateText, validatePassword, validatePhone, validateNumber } from '../utils/validation';
 
 function Sidebar() {
@@ -112,7 +114,7 @@ function DashboardHome() {
       </div>
 
       {/* Stats Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-5">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-5">
         <StatCard
           title="Total Students"
           value={students.length}
@@ -721,108 +723,109 @@ function StudentsPage() {
         </form>
       </Modal>
 
-      {/* Students Table */}
+      {/* Students — Responsive Table/Cards */}
       <Card className="overflow-hidden">
-        <div className="overflow-x-auto min-w-full">
-          <table className="w-full text-left text-xs sm:text-sm">
-            <thead className="bg-slate-50/80 text-slate-600 font-semibold border-b border-slate-200/80 text-[11px] tracking-wider">
-              <tr>
-                <th className="px-4 py-3">Student ID</th>
-                <th className="px-4 py-3">Name</th>
-                <th className="px-4 py-3">Class</th>
-                <th className="px-4 py-3">Room</th>
-                <th className="px-4 py-3">Wallet</th>
-                <th className="px-4 py-3">Linked Parents</th>
-                <th className="px-4 py-3">Status</th>
-                <th className="px-4 py-3 text-right">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100 font-medium">
-              {students.length === 0 ? (
-                <tr>
-                  <td colSpan="8">
-                    <EmptyState
-                      icon={Users}
-                      title="No students found"
-                      description="Click 'Add Student' to register hostel residents."
-                      actionLabel="Add Student"
-                      onAction={() => setIsModalOpen(true)}
-                    />
-                  </td>
-                </tr>
-              ) : (
-                students.map((s) => (
-                  <tr key={s.id} className="hover:bg-slate-50/60 transition-colors">
-                    <td className="px-4 py-3.5 font-bold text-brand-700 font-mono">{s.studentId}</td>
-                    <td className="px-4 py-3.5 font-semibold text-slate-900">{s.name}</td>
-                    <td className="px-4 py-3.5 text-slate-600">{s.classSection || '—'}</td>
-                    <td className="px-4 py-3.5 text-slate-600">{s.roomNo || '—'}</td>
-                    <td className="px-4 py-3.5 font-bold text-slate-900 font-mono">
-                      ₹{parseFloat(s.walletBalance || 0).toFixed(2)}
-                    </td>
-                    <td className="px-4 py-3.5">
-                      <div className="flex flex-wrap gap-1.5 items-center">
-                        {s.parents && s.parents.length > 0 ? (
-                          s.parents.map((p) => (
-                            <button
-                              key={p.id}
-                              type="button"
-                              onClick={() => openEditParentModal(p.parent, s.id)}
-                              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-semibold bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 cursor-pointer transition"
-                              title="Click to edit parent contact"
-                            >
-                              <span>{p.parent?.name || p.parent?.mobile} ({p.parent?.relation})</span>
-                              <Edit2 size={10} className="text-slate-400" />
-                            </button>
-                          ))
-                        ) : (
-                          <span className="text-xs text-slate-400">None</span>
-                        )}
-                        <button
-                          onClick={() => {
-                            setParentModalStudent(s);
-                            setParentErrors({});
-                          }}
-                          className="inline-flex items-center gap-1 text-[11px] text-brand-600 hover:text-brand-700 font-semibold px-2 py-0.5 rounded-md bg-brand-50 hover:bg-brand-100/70 border border-brand-200 transition cursor-pointer"
-                          title="Add another parent"
-                        >
-                          <UserPlus size={12} /> + Parent
+        {students.length === 0 ? (
+          <EmptyState
+            icon={Users}
+            title="No students found"
+            description="Click 'Add Student' to register hostel residents."
+            actionLabel="Add Student"
+            onAction={() => setIsModalOpen(true)}
+          />
+        ) : (
+          <ResponsiveTable
+            columns={[
+              { key: 'studentId', label: 'Student ID' },
+              { key: 'name', label: 'Name' },
+              { key: 'classSection', label: 'Class', hideOnMobile: true },
+              { key: 'roomNo', label: 'Room', hideOnMobile: true },
+              { key: 'wallet', label: 'Wallet' },
+              { key: 'parents', label: 'Linked Parents', hideOnMobile: true },
+              { key: 'status', label: 'Status' },
+              { key: 'actions', label: 'Actions', className: 'text-right', hideOnMobile: true },
+            ]}
+            data={students}
+            keyField="id"
+            renderCell={(s, col) => {
+              switch (col.key) {
+                case 'studentId': return <span className="font-bold text-brand-700 font-mono">{s.studentId}</span>;
+                case 'name': return <span className="font-semibold text-slate-900">{s.name}</span>;
+                case 'classSection': return <span className="text-slate-600">{s.classSection || '—'}</span>;
+                case 'roomNo': return <span className="text-slate-600">{s.roomNo || '—'}</span>;
+                case 'wallet': return <span className="font-bold text-slate-900 font-mono">₹{parseFloat(s.walletBalance || 0).toFixed(2)}</span>;
+                case 'parents': return (
+                  <div className="flex flex-wrap gap-1.5 items-center">
+                    {s.parents && s.parents.length > 0 ? (
+                      s.parents.map((p) => (
+                        <button key={p.id} type="button" onClick={() => openEditParentModal(p.parent, s.id)}
+                          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-semibold bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 cursor-pointer transition" title="Click to edit parent contact">
+                          <span>{p.parent?.name || p.parent?.mobile} ({p.parent?.relation})</span>
+                          <Edit2 size={10} className="text-slate-400" />
                         </button>
-                      </div>
-                    </td>
-                    <td className="px-4 py-3.5">
-                      <Badge variant={s.isActive ? 'success' : 'danger'} withDot>
-                        {s.isActive ? 'Active' : 'Inactive'}
-                      </Badge>
-                    </td>
-                    <td className="px-4 py-3.5 text-right">
-                      <div className="flex items-center justify-end gap-1.5">
-                        <Button
-                          variant="secondary"
-                          size="sm"
-                          icon={Edit2}
-                          onClick={() => openEditStudentModal(s)}
-                          className="text-slate-700 hover:text-brand-700"
-                        >
-                          Edit
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          icon={Power}
-                          onClick={() => toggleStatus(s.id)}
-                          className="text-slate-600 hover:text-slate-900"
-                        >
-                          Toggle
-                        </Button>
-                      </div>
-                    </td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
+                      ))
+                    ) : <span className="text-xs text-slate-400">None</span>}
+                    <button onClick={() => { setParentModalStudent(s); setParentErrors({}); }}
+                      className="inline-flex items-center gap-1 text-[11px] text-brand-600 hover:text-brand-700 font-semibold px-2 py-0.5 rounded-md bg-brand-50 hover:bg-brand-100/70 border border-brand-200 transition cursor-pointer" title="Add another parent">
+                      <UserPlus size={12} /> + Parent
+                    </button>
+                  </div>
+                );
+                case 'status': return <Badge variant={s.isActive ? 'success' : 'danger'} withDot>{s.isActive ? 'Active' : 'Inactive'}</Badge>;
+                case 'actions': return (
+                  <div className="flex items-center justify-end gap-1.5">
+                    <Button variant="secondary" size="sm" icon={Edit2} onClick={() => openEditStudentModal(s)} className="text-slate-700 hover:text-brand-700">Edit</Button>
+                    <Button variant="ghost" size="sm" icon={Power} onClick={() => toggleStatus(s.id)} className="text-slate-600 hover:text-slate-900">Toggle</Button>
+                  </div>
+                );
+                default: return null;
+              }
+            }}
+            renderMobileCard={(s) => (
+              <div className="bg-white rounded-xl border border-slate-200/90 shadow-card overflow-hidden">
+                <div className="px-4 py-3 flex items-center justify-between gap-3 border-b border-slate-100">
+                  <div className="min-w-0">
+                    <p className="font-bold text-sm text-slate-900 truncate">{s.name}</p>
+                    <p className="text-[11px] font-mono text-brand-700 font-bold">{s.studentId}</p>
+                  </div>
+                  <Badge variant={s.isActive ? 'success' : 'danger'} withDot>{s.isActive ? 'Active' : 'Inactive'}</Badge>
+                </div>
+                <div className="divide-y divide-slate-100">
+                  <div className="flex items-center justify-between px-4 py-2">
+                    <span className="text-[11px] font-semibold text-slate-500 uppercase">Class / Room</span>
+                    <span className="text-sm font-medium text-slate-700">{s.classSection || '—'} / {s.roomNo || '—'}</span>
+                  </div>
+                  <div className="flex items-center justify-between px-4 py-2">
+                    <span className="text-[11px] font-semibold text-slate-500 uppercase">Wallet</span>
+                    <span className="text-sm font-bold text-slate-900 font-mono">₹{parseFloat(s.walletBalance || 0).toFixed(2)}</span>
+                  </div>
+                  <div className="px-4 py-2">
+                    <span className="text-[11px] font-semibold text-slate-500 uppercase block mb-1.5">Parents</span>
+                    <div className="flex flex-wrap gap-1.5">
+                      {s.parents && s.parents.length > 0 ? (
+                        s.parents.map((p) => (
+                          <button key={p.id} type="button" onClick={() => openEditParentModal(p.parent, s.id)}
+                            className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-semibold bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 cursor-pointer transition">
+                            <span>{p.parent?.name || p.parent?.mobile}</span>
+                            <Edit2 size={10} className="text-slate-400" />
+                          </button>
+                        ))
+                      ) : <span className="text-xs text-slate-400">None linked</span>}
+                      <button onClick={() => { setParentModalStudent(s); setParentErrors({}); }}
+                        className="inline-flex items-center gap-1 text-[11px] text-brand-600 font-semibold px-2 py-1 rounded-md bg-brand-50 border border-brand-200 cursor-pointer">
+                        <UserPlus size={12} /> Add
+                      </button>
+                    </div>
+                  </div>
+                </div>
+                <div className="px-4 py-3 bg-slate-50/70 border-t border-slate-100 flex items-center gap-2">
+                  <Button variant="secondary" size="sm" icon={Edit2} onClick={() => openEditStudentModal(s)} className="flex-1">Edit</Button>
+                  <Button variant="ghost" size="sm" icon={Power} onClick={() => toggleStatus(s.id)} className="flex-1">Toggle</Button>
+                </div>
+              </div>
+            )}
+          />
+        )}
       </Card>
     </div>
   );
@@ -843,46 +846,62 @@ function CallsPage() {
       </div>
 
       <Card className="overflow-hidden">
-        <div className="overflow-x-auto min-w-full">
-          <table className="w-full text-left text-xs sm:text-sm">
-            <thead className="bg-slate-50/80 text-slate-600 font-semibold border-b border-slate-200/80 text-[11px] tracking-wider">
-              <tr>
-                <th className="px-4 py-3">Student</th>
-                <th className="px-4 py-3">Parent</th>
-                <th className="px-4 py-3">Duration</th>
-                <th className="px-4 py-3">Charge</th>
-                <th className="px-4 py-3">Status</th>
-                <th className="px-4 py-3 text-right">Date & Time</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100 font-medium">
-              {calls.length === 0 ? (
-                <tr>
-                  <td colSpan="6">
-                    <EmptyState
-                      icon={Phone}
-                      title="No calls recorded"
-                      description="Completed video call sessions will appear here automatically."
-                    />
-                  </td>
-                </tr>
-              ) : (
-                calls.map((c) => (
-                  <tr key={c.id} className="hover:bg-slate-50/60 transition-colors">
-                    <td className="px-4 py-3.5 font-semibold text-slate-900">{c.student?.name}</td>
-                    <td className="px-4 py-3.5 text-slate-600">{c.parent?.name || c.parent?.mobile}</td>
-                    <td className="px-4 py-3.5 font-mono text-slate-700">{Math.floor(c.durationSeconds / 60)}m {c.durationSeconds % 60}s</td>
-                    <td className="px-4 py-3.5 font-bold text-slate-900 font-mono">₹{c.chargeAmount}</td>
-                    <td className="px-4 py-3.5">
-                      <Badge variant="neutral">{c.status}</Badge>
-                    </td>
-                    <td className="px-4 py-3.5 text-right text-slate-500 text-xs">{new Date(c.createdAt).toLocaleString()}</td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
+        {calls.length === 0 ? (
+          <EmptyState
+            icon={Phone}
+            title="No calls recorded"
+            description="Completed video call sessions will appear here automatically."
+          />
+        ) : (
+          <ResponsiveTable
+            columns={[
+              { key: 'student', label: 'Student' },
+              { key: 'parent', label: 'Parent' },
+              { key: 'duration', label: 'Duration' },
+              { key: 'charge', label: 'Charge' },
+              { key: 'status', label: 'Status' },
+              { key: 'date', label: 'Date & Time', className: 'text-right' },
+            ]}
+            data={calls}
+            keyField="id"
+            renderCell={(c, col) => {
+              switch (col.key) {
+                case 'student': return <span className="font-semibold text-slate-900">{c.student?.name}</span>;
+                case 'parent': return <span className="text-slate-600">{c.parent?.name || c.parent?.mobile}</span>;
+                case 'duration': return <span className="font-mono text-slate-700">{Math.floor(c.durationSeconds / 60)}m {c.durationSeconds % 60}s</span>;
+                case 'charge': return <span className="font-bold text-slate-900 font-mono">₹{c.chargeAmount}</span>;
+                case 'status': return <Badge variant="neutral">{c.status}</Badge>;
+                case 'date': return <span className="text-slate-500 text-xs">{new Date(c.createdAt).toLocaleString()}</span>;
+                default: return null;
+              }
+            }}
+            renderMobileCard={(c) => (
+              <div className="bg-white rounded-xl border border-slate-200/90 shadow-card overflow-hidden">
+                <div className="px-4 py-3 flex items-center justify-between gap-3 border-b border-slate-100">
+                  <div className="min-w-0">
+                    <p className="font-semibold text-sm text-slate-900 truncate">{c.student?.name}</p>
+                    <p className="text-xs text-slate-500">{c.parent?.name || c.parent?.mobile}</p>
+                  </div>
+                  <Badge variant="neutral">{c.status}</Badge>
+                </div>
+                <div className="divide-y divide-slate-100">
+                  <div className="flex items-center justify-between px-4 py-2">
+                    <span className="text-[11px] font-semibold text-slate-500 uppercase">Duration</span>
+                    <span className="text-sm font-mono text-slate-700">{Math.floor(c.durationSeconds / 60)}m {c.durationSeconds % 60}s</span>
+                  </div>
+                  <div className="flex items-center justify-between px-4 py-2">
+                    <span className="text-[11px] font-semibold text-slate-500 uppercase">Charge</span>
+                    <span className="text-sm font-bold text-slate-900 font-mono">₹{c.chargeAmount}</span>
+                  </div>
+                  <div className="flex items-center justify-between px-4 py-2">
+                    <span className="text-[11px] font-semibold text-slate-500 uppercase">Date</span>
+                    <span className="text-xs text-slate-500">{new Date(c.createdAt).toLocaleString()}</span>
+                  </div>
+                </div>
+              </div>
+            )}
+          />
+        )}
       </Card>
     </div>
   );
@@ -1227,7 +1246,7 @@ export default function SchoolDashboard() {
   }
 
   const links = [
-    { to: '/school', label: 'Overview', icon: Building },
+    { to: '/school', label: 'Overview', icon: LayoutDashboard },
     { to: '/school/students', label: 'Students & Parents', icon: Users },
     { to: '/school/pricing', label: 'Call Pricing', icon: Coins },
     { to: '/school/calls', label: 'Call History', icon: Phone },
@@ -1235,48 +1254,20 @@ export default function SchoolDashboard() {
   ];
 
   return (
-    <div className="flex min-h-screen bg-slate-50">
-      {/* Desktop Sidebar */}
-      <Sidebar />
-
-      {/* Mobile Off-canvas Drawer */}
-      <MobileNavDrawer
-        isOpen={mobileDrawerOpen}
-        onClose={() => setMobileDrawerOpen(false)}
-        links={links}
-        title="School Panel"
-        subtitle={user?.name || user?.schoolCode}
-      />
-
-      <div className="flex-1 flex flex-col min-w-0">
-        {/* Mobile Header Bar */}
-        <header className="lg:hidden h-14 bg-slate-900 text-white px-4 flex items-center justify-between border-b border-slate-800 sticky top-0 z-30">
-          <div className="flex items-center gap-3">
-            <button
-              onClick={() => setMobileDrawerOpen(true)}
-              className="p-1.5 text-slate-300 hover:text-white rounded-lg hover:bg-slate-800 transition"
-              aria-label="Open Navigation Menu"
-            >
-              <Menu size={20} />
-            </button>
-            <span className="font-bold text-sm">School Panel</span>
-          </div>
-          <button onClick={logout} className="p-1.5 text-rose-400 hover:text-rose-300 text-xs font-semibold">
-            Sign Out
-          </button>
-        </header>
-
-        {/* Main Content Area */}
-        <main className="flex-1 p-4 sm:p-6 lg:p-8 max-w-6xl w-full mx-auto">
-          <Routes>
-            <Route path="/" element={<DashboardHome />} />
-            <Route path="/students" element={<StudentsPage />} />
-            <Route path="/pricing" element={<PricingPage />} />
-            <Route path="/calls" element={<CallsPage />} />
-            <Route path="/recharge" element={<RechargePage />} />
-          </Routes>
-        </main>
+    <DashboardLayout
+      navLinks={links}
+      title="School Management Panel"
+      subtitle={`${user?.name || 'School'} (Code: ${user?.schoolCode || 'SCH001'})`}
+    >
+      <div className="max-w-6xl mx-auto">
+        <Routes>
+          <Route path="/" element={<DashboardHome />} />
+          <Route path="/students" element={<StudentsPage />} />
+          <Route path="/pricing" element={<PricingPage />} />
+          <Route path="/calls" element={<CallsPage />} />
+          <Route path="/recharge" element={<RechargePage />} />
+        </Routes>
       </div>
-    </div>
+    </DashboardLayout>
   );
 }

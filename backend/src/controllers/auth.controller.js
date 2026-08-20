@@ -1,23 +1,61 @@
+const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
 const prisma = require('../utils/prisma');
 const { generateToken } = require('../utils/jwt');
+const { auditFromReq, logAudit, getClientIp } = require('../utils/audit');
 
-// Super Admin Login
+const isDemoMode = () => process.env.DEMO_MODE === 'true';
+
+// ─── Super Admin Login ──────────────────────────────────────────────────────
 exports.superAdminLogin = async (req, res, next) => {
   try {
-    const { email, password } = req.body;
-    const admin = await prisma.superAdmin.findUnique({ where: { email } });
+    const rawEmail = (req.body.email || req.body.username || '').trim();
+    const password = req.body.password || '';
 
-    if (!admin || !admin.isActive) {
+    if (!rawEmail || !password) {
+      return res.status(400).json({ success: false, message: 'Email and password are required' });
+    }
+
+    const admin = await prisma.superAdmin.findFirst({
+      where: {
+        OR: [
+          { email: rawEmail },
+          { email: rawEmail.toLowerCase() },
+        ],
+      },
+    });
+
+    if (!admin) {
+      logAudit({ userId: null, userRole: 'superadmin', action: 'login_failed', details: { email: rawEmail, reason: 'not_found' }, ipAddress: getClientIp(req), userAgent: req.headers['user-agent'] });
       return res.status(401).json({ success: false, message: 'Invalid credentials' });
     }
 
-    const valid = await bcrypt.compare(password, admin.passwordHash);
+    if (!admin.isActive) {
+      return res.status(401).json({ success: false, message: 'Super admin account is inactive' });
+    }
+
+    // Password verification
+    let valid = false;
+    if (admin.passwordHash) {
+      valid = await bcrypt.compare(password, admin.passwordHash).catch(() => false);
+    }
+
+    // Demo mode fallback (development only)
+    if (!valid && isDemoMode()) {
+      const demoPasswords = ['superadmin123', 'SuperAdmin@123', 'admin123', 'password'];
+      if (demoPasswords.includes(password) || demoPasswords.includes(password.toLowerCase())) {
+        valid = true;
+      }
+    }
+
     if (!valid) {
+      logAudit({ userId: admin.id, userRole: 'superadmin', action: 'login_failed', details: { email: rawEmail, reason: 'wrong_password' }, ipAddress: getClientIp(req), userAgent: req.headers['user-agent'] });
       return res.status(401).json({ success: false, message: 'Invalid credentials' });
     }
 
     const token = generateToken({ id: admin.id, role: 'superadmin', email: admin.email });
+
+    logAudit({ userId: admin.id, userRole: 'superadmin', action: 'login', details: { email: admin.email }, ipAddress: getClientIp(req), userAgent: req.headers['user-agent'] });
 
     res.json({
       success: true,
@@ -36,18 +74,49 @@ exports.superAdminLogin = async (req, res, next) => {
   }
 };
 
-// School Login
+// ─── School Login ───────────────────────────────────────────────────────────
 exports.schoolLogin = async (req, res, next) => {
   try {
-    const { schoolCode, password } = req.body;
-    const school = await prisma.school.findUnique({ where: { schoolCode } });
+    const rawCode = (req.body.schoolCode || req.body.username || '').trim();
+    const password = req.body.password || '';
 
-    if (!school || !school.isActive || !school.passwordHash) {
-      return res.status(401).json({ success: false, message: 'Invalid credentials or school inactive' });
+    if (!rawCode || !password) {
+      return res.status(400).json({ success: false, message: 'School code and password are required' });
     }
 
-    const valid = await bcrypt.compare(password, school.passwordHash);
+    const school = await prisma.school.findFirst({
+      where: {
+        OR: [
+          { schoolCode: rawCode },
+          { schoolCode: rawCode.toUpperCase() },
+        ],
+      },
+    });
+
+    if (!school) {
+      logAudit({ userId: null, userRole: 'school', action: 'login_failed', details: { schoolCode: rawCode, reason: 'not_found' }, ipAddress: getClientIp(req), userAgent: req.headers['user-agent'] });
+      return res.status(401).json({ success: false, message: 'Invalid credentials' });
+    }
+
+    if (!school.isActive) {
+      return res.status(401).json({ success: false, message: 'School account is inactive' });
+    }
+
+    let valid = false;
+    if (school.passwordHash) {
+      valid = await bcrypt.compare(password, school.passwordHash).catch(() => false);
+    }
+
+    // Demo mode fallback (development only)
+    if (!valid && isDemoMode()) {
+      const demoPasswords = ['school123', 'School@123', 'dps123', 'admin123', 'password'];
+      if (demoPasswords.includes(password) || demoPasswords.includes(password.toLowerCase())) {
+        valid = true;
+      }
+    }
+
     if (!valid) {
+      logAudit({ userId: school.id, userRole: 'school', action: 'login_failed', details: { schoolCode: rawCode, reason: 'wrong_password' }, ipAddress: getClientIp(req), userAgent: req.headers['user-agent'] });
       return res.status(401).json({ success: false, message: 'Invalid credentials' });
     }
 
@@ -57,6 +126,8 @@ exports.schoolLogin = async (req, res, next) => {
       schoolId: school.id,
       schoolCode: school.schoolCode,
     });
+
+    logAudit({ userId: school.id, userRole: 'school', action: 'login', details: { schoolCode: school.schoolCode }, ipAddress: getClientIp(req), userAgent: req.headers['user-agent'] });
 
     res.json({
       success: true,
@@ -75,42 +146,71 @@ exports.schoolLogin = async (req, res, next) => {
   }
 };
 
-// Student Login
+// ─── Student Login ──────────────────────────────────────────────────────────
 exports.studentLogin = async (req, res, next) => {
   try {
-    const { schoolCode, studentId, password } = req.body;
+    const rawSchoolCode = (req.body.schoolCode || '').trim();
+    const rawStudentId = (req.body.studentId || '').trim();
+    const password = req.body.password || '';
 
-    const school = await prisma.school.findUnique({ where: { schoolCode } });
-    if (!school || !school.isActive) {
-      return res.status(401).json({ success: false, message: 'School not found or inactive' });
+    if (!rawSchoolCode || !rawStudentId || !password) {
+      return res.status(400).json({ success: false, message: 'School code, student ID, and password are required' });
     }
 
-    const student = await prisma.student.findUnique({
+    const school = await prisma.school.findFirst({
       where: {
-        schoolId_studentId: {
-          schoolId: school.id,
-          studentId,
-        },
+        OR: [
+          { schoolCode: rawSchoolCode },
+          { schoolCode: rawSchoolCode.toUpperCase() },
+        ],
+      },
+    });
+
+    if (!school) {
+      return res.status(401).json({ success: false, message: 'School not found' });
+    }
+
+    const student = await prisma.student.findFirst({
+      where: {
+        schoolId: school.id,
+        OR: [
+          { studentId: rawStudentId },
+          { studentId: rawStudentId.toUpperCase() },
+        ],
       },
     });
 
     if (!student || !student.isActive) {
-      return res.status(401).json({ success: false, message: 'Student not found or inactive' });
+      logAudit({ userId: null, userRole: 'student', action: 'login_failed', details: { schoolCode: rawSchoolCode, studentId: rawStudentId, reason: 'not_found' }, ipAddress: getClientIp(req), userAgent: req.headers['user-agent'] });
+      return res.status(401).json({ success: false, message: 'Student account not found or inactive' });
     }
 
+    let valid = false;
     if (student.passwordHash) {
-      const valid = await bcrypt.compare(password, student.passwordHash);
-      if (!valid) {
-        return res.status(401).json({ success: false, message: 'Invalid credentials' });
+      valid = await bcrypt.compare(password, student.passwordHash).catch(() => false);
+    }
+
+    // Demo mode fallback (development only)
+    if (!valid && isDemoMode()) {
+      const demoPasswords = ['student123', 'Student@123', 'stu123', 'password'];
+      if (demoPasswords.includes(password) || demoPasswords.includes(password.toLowerCase())) {
+        valid = true;
       }
+    }
+
+    if (!valid) {
+      logAudit({ userId: student.id, userRole: 'student', action: 'login_failed', details: { studentId: rawStudentId, reason: 'wrong_password' }, ipAddress: getClientIp(req), userAgent: req.headers['user-agent'] });
+      return res.status(401).json({ success: false, message: 'Invalid credentials' });
     }
 
     const token = generateToken({
       id: student.id,
       role: 'student',
-      schoolId: school.id,
+      schoolId: student.schoolId,
       studentId: student.studentId,
     });
+
+    logAudit({ userId: student.id, userRole: 'student', action: 'login', details: { studentId: student.studentId }, ipAddress: getClientIp(req), userAgent: req.headers['user-agent'] });
 
     res.json({
       success: true,
@@ -120,7 +220,7 @@ exports.studentLogin = async (req, res, next) => {
           id: student.id,
           name: student.name,
           studentId: student.studentId,
-          schoolId: school.id,
+          schoolId: student.schoolId,
           walletBalance: student.walletBalance,
           role: 'student',
         },
@@ -131,8 +231,7 @@ exports.studentLogin = async (req, res, next) => {
   }
 };
 
-// Parent Login (OTP based - simplified for demo)
-// In production: integrate Twilio / MSG91 / Firebase Phone Auth
+// ─── Parent Login (OTP based) ───────────────────────────────────────────────
 exports.parentRequestOtp = async (req, res, next) => {
   try {
     const rawMobile = req.body.mobile || '';
@@ -141,19 +240,24 @@ exports.parentRequestOtp = async (req, res, next) => {
       return res.status(400).json({ success: false, message: 'Valid 10-digit mobile number required' });
     }
 
-    let parent = await prisma.parent.findUnique({ where: { mobile } });
+    const parent = await prisma.parent.findUnique({ where: { mobile } });
     if (!parent) {
-      parent = await prisma.parent.create({
-        data: { mobile, name: `Parent ${mobile.slice(-4)}` },
-      });
+      return res.status(404).json({ success: false, message: 'No parent account found with this mobile number. Please contact your school administrator.' });
     }
 
-    // Demo fixed OTP
-    const otp = '123456';
+    // In production, integrate with an SMS OTP provider (e.g., Msg91, Twilio)
+    // For now, generate and store OTP (demo mode uses 123456)
+    // TODO: Implement real OTP service
+
+    logAudit({ userId: parent.id, userRole: 'parent', action: 'otp_requested', details: { mobile }, ipAddress: getClientIp(req), userAgent: req.headers['user-agent'] });
+
+    const message = isDemoMode()
+      ? 'OTP sent successfully (Demo OTP: 123456)'
+      : 'OTP sent to your registered mobile number';
 
     res.json({
       success: true,
-      message: 'OTP sent successfully (Demo OTP: 123456)',
+      message,
       data: { mobile, expiresIn: 300 },
     });
   } catch (error) {
@@ -167,9 +271,23 @@ exports.parentVerifyOtp = async (req, res, next) => {
     const mobile = rawMobile.replace(/\D/g, '').slice(-10);
     const { otp } = req.body;
 
-    // Demo: accept 123456 or any 6-digit test OTP
-    if (otp !== '123456' && otp !== '000000') {
-      return res.status(401).json({ success: false, message: 'Invalid OTP. Please use demo OTP: 123456' });
+    if (!mobile || mobile.length < 10) {
+      return res.status(400).json({ success: false, message: 'Valid mobile number required' });
+    }
+
+    if (!otp || typeof otp !== 'string' || otp.length !== 6) {
+      return res.status(400).json({ success: false, message: 'Valid 6-digit OTP required' });
+    }
+
+    // In production, verify OTP against stored value from SMS provider
+    // For demo mode, accept 123456
+    if (isDemoMode()) {
+      if (otp !== '123456' && otp !== '000000') {
+        return res.status(401).json({ success: false, message: 'Invalid OTP' });
+      }
+    } else {
+      // TODO: Verify real OTP from SMS service
+      return res.status(501).json({ success: false, message: 'Real OTP verification not yet configured. Enable DEMO_MODE=true for development.' });
     }
 
     const parent = await prisma.parent.findUnique({
@@ -178,22 +296,33 @@ exports.parentVerifyOtp = async (req, res, next) => {
         students: {
           include: {
             student: {
-              include: { school: true },
+              include: {
+                school: true,
+              },
             },
           },
         },
       },
     });
 
-    if (!parent || !parent.isActive) {
-      return res.status(401).json({ success: false, message: 'Parent not found' });
+    if (!parent) {
+      return res.status(404).json({ success: false, message: 'Parent not found' });
     }
 
-    const token = generateToken({
-      id: parent.id,
-      role: 'parent',
-      mobile: parent.mobile,
-    });
+    const token = generateToken({ id: parent.id, role: 'parent', mobile: parent.mobile });
+
+    logAudit({ userId: parent.id, userRole: 'parent', action: 'login', details: { mobile: parent.mobile }, ipAddress: getClientIp(req), userAgent: req.headers['user-agent'] });
+
+    // Transform student data for frontend
+    const studentData = (parent.students || []).map(sp => ({
+      id: sp.student.id,
+      name: sp.student.name,
+      studentId: sp.student.studentId,
+      schoolId: sp.student.schoolId,
+      schoolName: sp.student.school?.name || '',
+      walletBalance: sp.student.walletBalance,
+      isPrimary: sp.isPrimary,
+    }));
 
     res.json({
       success: true,
@@ -203,18 +332,223 @@ exports.parentVerifyOtp = async (req, res, next) => {
           id: parent.id,
           name: parent.name,
           mobile: parent.mobile,
-          relation: parent.relation,
           role: 'parent',
-          students: parent.students.map((sp) => ({
-            id: sp.student.id,
-            name: sp.student.name,
-            studentId: sp.student.studentId,
-            schoolName: sp.student.school.name,
-            isPrimary: sp.isPrimary,
-          })),
+          students: studentData,
         },
       },
     });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// ─── GET /auth/me — Current user profile from token ─────────────────────────
+exports.getMe = async (req, res, next) => {
+  try {
+    const { id, role } = req.user;
+    let user = null;
+
+    if (role === 'superadmin') {
+      const admin = await prisma.superAdmin.findUnique({ where: { id } });
+      if (admin) {
+        user = { id: admin.id, name: admin.name, email: admin.email, role: 'superadmin' };
+      }
+    } else if (role === 'school') {
+      const school = await prisma.school.findUnique({ where: { id } });
+      if (school) {
+        user = { id: school.id, name: school.name, schoolCode: school.schoolCode, role: 'school' };
+      }
+    } else if (role === 'student') {
+      const student = await prisma.student.findUnique({ where: { id }, include: { school: { select: { name: true } } } });
+      if (student) {
+        user = { id: student.id, name: student.name, studentId: student.studentId, schoolId: student.schoolId, walletBalance: student.walletBalance, role: 'student' };
+      }
+    } else if (role === 'parent') {
+      const parent = await prisma.parent.findUnique({
+        where: { id },
+        include: {
+          students: {
+            include: {
+              student: { include: { school: true } },
+            },
+          },
+        },
+      });
+      if (parent) {
+        user = {
+          id: parent.id,
+          name: parent.name,
+          mobile: parent.mobile,
+          role: 'parent',
+          students: (parent.students || []).map(sp => ({
+            id: sp.student.id,
+            name: sp.student.name,
+            studentId: sp.student.studentId,
+            schoolId: sp.student.schoolId,
+            schoolName: sp.student.school?.name || '',
+            walletBalance: sp.student.walletBalance,
+            isPrimary: sp.isPrimary,
+          })),
+        };
+      }
+    }
+
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
+
+    res.json({ success: true, data: { user } });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// ─── POST /auth/change-password — Authenticated password change ─────────────
+exports.changePassword = async (req, res, next) => {
+  try {
+    const audit = auditFromReq(req);
+    const { currentPassword, newPassword } = req.body;
+    const { id, role } = req.user;
+
+    if (!currentPassword || !newPassword) {
+      return res.status(400).json({ success: false, message: 'Current and new passwords are required' });
+    }
+
+    if (newPassword.length < 6) {
+      return res.status(400).json({ success: false, message: 'New password must be at least 6 characters' });
+    }
+
+    let entity;
+    if (role === 'superadmin') {
+      entity = await prisma.superAdmin.findUnique({ where: { id } });
+    } else if (role === 'school') {
+      entity = await prisma.school.findUnique({ where: { id } });
+    } else if (role === 'student') {
+      entity = await prisma.student.findUnique({ where: { id } });
+    } else {
+      return res.status(400).json({ success: false, message: 'Password change not supported for this role' });
+    }
+
+    if (!entity || !entity.passwordHash) {
+      return res.status(400).json({ success: false, message: 'Cannot change password for this account' });
+    }
+
+    const valid = await bcrypt.compare(currentPassword, entity.passwordHash);
+    if (!valid) {
+      return res.status(401).json({ success: false, message: 'Current password is incorrect' });
+    }
+
+    const newHash = await bcrypt.hash(newPassword, 12);
+
+    if (role === 'superadmin') {
+      await prisma.superAdmin.update({ where: { id }, data: { passwordHash: newHash } });
+    } else if (role === 'school') {
+      await prisma.school.update({ where: { id }, data: { passwordHash: newHash } });
+    } else if (role === 'student') {
+      await prisma.student.update({ where: { id }, data: { passwordHash: newHash } });
+    }
+
+    audit('password_changed', role, id, {});
+
+    res.json({ success: true, message: 'Password changed successfully' });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// ─── POST /auth/password-reset/request — Request password reset token ───────
+exports.requestPasswordReset = async (req, res, next) => {
+  try {
+    const { email, schoolCode, role: resetRole } = req.body;
+
+    if (!resetRole || !['superadmin', 'school'].includes(resetRole)) {
+      return res.status(400).json({ success: false, message: 'Password reset is available for superadmin and school accounts' });
+    }
+
+    const resetToken = crypto.randomBytes(32).toString('hex');
+    const tokenHash = crypto.createHash('sha256').update(resetToken).digest('hex');
+    const expiry = new Date(Date.now() + 3600000); // 1 hour
+
+    if (resetRole === 'superadmin' && email) {
+      const admin = await prisma.superAdmin.findUnique({ where: { email } });
+      if (admin) {
+        await prisma.superAdmin.update({
+          where: { id: admin.id },
+          data: { passwordResetToken: tokenHash, passwordResetExpiry: expiry },
+        });
+      }
+    } else if (resetRole === 'school' && schoolCode) {
+      const school = await prisma.school.findFirst({ where: { schoolCode } });
+      if (school) {
+        await prisma.school.update({
+          where: { id: school.id },
+          data: { passwordResetToken: tokenHash, passwordResetExpiry: expiry },
+        });
+      }
+    }
+
+    // Always return success to prevent user enumeration
+    res.json({
+      success: true,
+      message: 'If an account exists with the provided details, a reset token has been generated.',
+      ...(isDemoMode() ? { resetToken } : {}), // Only expose token in demo mode
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// ─── POST /auth/password-reset/confirm — Confirm password reset ─────────────
+exports.confirmPasswordReset = async (req, res, next) => {
+  try {
+    const { resetToken, newPassword, role: resetRole } = req.body;
+
+    if (!resetToken || !newPassword || !resetRole) {
+      return res.status(400).json({ success: false, message: 'Reset token, new password, and role are required' });
+    }
+
+    if (newPassword.length < 6) {
+      return res.status(400).json({ success: false, message: 'New password must be at least 6 characters' });
+    }
+
+    const tokenHash = crypto.createHash('sha256').update(resetToken).digest('hex');
+    const newHash = await bcrypt.hash(newPassword, 12);
+
+    if (resetRole === 'superadmin') {
+      const admin = await prisma.superAdmin.findFirst({
+        where: {
+          passwordResetToken: tokenHash,
+          passwordResetExpiry: { gte: new Date() },
+        },
+      });
+      if (!admin) {
+        return res.status(400).json({ success: false, message: 'Invalid or expired reset token' });
+      }
+      await prisma.superAdmin.update({
+        where: { id: admin.id },
+        data: { passwordHash: newHash, passwordResetToken: null, passwordResetExpiry: null },
+      });
+    } else if (resetRole === 'school') {
+      const school = await prisma.school.findFirst({
+        where: {
+          passwordResetToken: tokenHash,
+          passwordResetExpiry: { gte: new Date() },
+        },
+      });
+      if (!school) {
+        return res.status(400).json({ success: false, message: 'Invalid or expired reset token' });
+      }
+      await prisma.school.update({
+        where: { id: school.id },
+        data: { passwordHash: newHash, passwordResetToken: null, passwordResetExpiry: null },
+      });
+    } else {
+      return res.status(400).json({ success: false, message: 'Invalid role for password reset' });
+    }
+
+    logAudit({ userId: null, userRole: resetRole, action: 'password_reset', details: { role: resetRole }, ipAddress: getClientIp(req), userAgent: req.headers['user-agent'] });
+
+    res.json({ success: true, message: 'Password has been reset successfully. You can now log in with your new password.' });
   } catch (error) {
     next(error);
   }

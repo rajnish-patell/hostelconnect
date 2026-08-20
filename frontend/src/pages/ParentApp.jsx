@@ -1,16 +1,18 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import toast from 'react-hot-toast';
 import { 
   Phone, Wallet, History, LogOut, User, Video, 
   Clock, CreditCard, ShieldCheck, RefreshCw, 
   MessageSquare, Plus, Minus, IndianRupee, 
-  Sparkles, CheckCircle2, Lock, ArrowRight
+  Sparkles, CheckCircle2, Lock, ArrowRight, LayoutDashboard
 } from 'lucide-react';
 import api from '../api';
 import { getUser, logout } from '../utils/auth';
+import DashboardLayout from '../components/DashboardLayout';
 import NativeVideoRoom from '../components/NativeVideoRoom';
 import UpiPaymentModal from '../components/UpiPaymentModal';
+import IncomingCallModal from '../components/IncomingCallModal';
 import Button from '../components/ui/Button';
 import Input from '../components/ui/Input';
 import Badge from '../components/ui/Badge';
@@ -18,7 +20,7 @@ import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '../co
 import EmptyState from '../components/ui/EmptyState';
 
 export default function ParentApp() {
-  const user = getUser();
+  const user = useMemo(() => getUser(), []);
   const [students, setStudents] = useState([]);
   const [history, setHistory] = useState([]);
   const [transactions, setTransactions] = useState([]);
@@ -43,6 +45,23 @@ export default function ParentApp() {
   // In-Call Video Room State
   const [inCall, setInCall] = useState(false);
   const [selectedStudent, setSelectedStudent] = useState(null);
+  const [incomingCallModalOpen, setIncomingCallModalOpen] = useState(false);
+
+  const joinVideoCall = (student) => {
+    setSelectedStudent(student);
+    setIncomingCallModalOpen(true);
+  };
+
+  const handleAcceptCall = () => {
+    setIncomingCallModalOpen(false);
+    setInCall(true);
+    toast.success(`Connecting with ${selectedStudent?.name || 'Student'}...`);
+  };
+
+  const handleDeclineCall = () => {
+    setIncomingCallModalOpen(false);
+    toast.error('Call declined');
+  };
 
   const fetchHistory = useCallback(async () => {
     setLoadingHistory(true);
@@ -80,11 +99,13 @@ export default function ParentApp() {
 
     fetchHistory();
     fetchTransactions();
-  }, [user, fetchHistory, fetchTransactions]);
+  }, [user?.id, fetchHistory, fetchTransactions]);
 
   useEffect(() => {
-    loadData();
-  }, [loadData]);
+    if (user?.id) {
+      loadData();
+    }
+  }, [user?.id]);
 
   // Fetch school pricing when booking student changes
   useEffect(() => {
@@ -178,12 +199,6 @@ export default function ParentApp() {
     }
   };
 
-  const joinVideoCall = (student) => {
-    setSelectedStudent(student);
-    setInCall(true);
-    toast.success(`Connecting with ${student.name}...`);
-  };
-
   const handleEndCall = (durationSeconds) => {
     setInCall(false);
     toast.success(`Call ended (${Math.floor(durationSeconds / 60)}m ${durationSeconds % 60}s)`);
@@ -237,69 +252,60 @@ export default function ParentApp() {
 
   const estimatedTotal = (selectedDuration * schoolPricing.perMinuteCharge).toFixed(2);
 
+  const links = [
+    { to: '/parent', label: 'Dashboard', icon: LayoutDashboard },
+    { to: '/parent', label: 'Book & Pay', icon: CreditCard },
+    { to: '/parent', label: 'Call History', icon: History },
+    { to: '/parent', label: 'Transactions', icon: Wallet },
+  ];
+
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-900 pb-20">
-      {/* UPI Modal */}
-      <UpiPaymentModal
-        isOpen={upiModalOpen}
-        onClose={() => setUpiModalOpen(false)}
-        orderDetails={activeOrderDetails}
-        onPaymentSuccess={handleVerifyPayment}
-        isProcessing={verifyingPayment}
-      />
+    <DashboardLayout
+      navLinks={links}
+      title="Parent Portal & Recharge Kiosk"
+      subtitle={`${user?.name || 'Parent'} (Mobile: ${user?.mobile || '9876501234'})`}
+    >
+      <div className="max-w-4xl mx-auto space-y-4 sm:space-y-6">
+        {/* Incoming Call Modal */}
+        <IncomingCallModal
+          isOpen={incomingCallModalOpen}
+          callerName={selectedStudent?.name || 'Child (Student)'}
+          callerRole="Student"
+          onAccept={handleAcceptCall}
+          onDecline={handleDeclineCall}
+        />
 
-      {/* Top Header */}
-      <header className="bg-white border-b border-slate-200/90 sticky top-0 z-30 shadow-xs">
-        <div className="max-w-4xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between gap-4">
-          <div className="flex items-center gap-3 min-w-0">
-            <div className="w-9 h-9 rounded-xl bg-brand-600 flex items-center justify-center text-white shrink-0 shadow-sm">
-              <User size={18} />
-            </div>
-            <div className="truncate">
-              <h1 className="font-bold text-sm sm:text-base leading-tight text-slate-900 truncate">
-                {user?.name || 'Parent Portal'}
-              </h1>
-              <p className="text-xs text-slate-500 font-mono font-medium truncate">{user?.mobile || '9876501234'}</p>
-            </div>
-          </div>
-
-          <Button
-            variant="ghost"
-            size="sm"
-            icon={LogOut}
-            onClick={logout}
-            className="text-slate-500 hover:text-slate-800"
-          >
-            Sign Out
-          </Button>
-        </div>
-      </header>
-
-      {/* Main Container */}
-      <main className="max-w-4xl mx-auto px-4 sm:px-6 pt-6 space-y-6">
+        {/* UPI Modal */}
+        <UpiPaymentModal
+          isOpen={upiModalOpen}
+          onClose={() => setUpiModalOpen(false)}
+          orderDetails={activeOrderDetails}
+          onPaymentSuccess={handleVerifyPayment}
+          isProcessing={verifyingPayment}
+        />
         {/* Banner Card */}
-        <div className="bg-white rounded-2xl p-5 sm:p-6 border border-slate-200/90 shadow-card flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div className="bg-white rounded-2xl p-4 sm:p-6 border border-slate-200/90 shadow-card flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-4">
           <div className="space-y-1">
             <Badge variant="brand" withDot>Parent Video Calling & UPI</Badge>
-            <h2 className="text-lg sm:text-xl font-bold text-slate-900 tracking-tight mt-1">Connect With Your Child</h2>
+            <h2 className="text-base sm:text-xl font-bold text-slate-900 tracking-tight mt-1">Connect With Your Child</h2>
             <p className="text-xs sm:text-sm text-slate-500 max-w-md leading-relaxed">
               School-administered per-minute calling rates with instant UPI recharge & browser HD video calls.
             </p>
           </div>
 
-          <div className="bg-slate-50 border border-slate-200/80 p-4 rounded-xl flex items-center gap-3 shrink-0">
-            <div className="w-10 h-10 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center shrink-0">
-              <ShieldCheck size={20} />
+          <div className="bg-slate-50 border border-slate-200/80 p-3 sm:p-4 rounded-xl flex items-center gap-3 shrink-0">
+            <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center shrink-0">
+              <ShieldCheck size={18} />
             </div>
             <div>
-              <p className="text-[11px] font-semibold text-slate-500">Billing Model</p>
-              <p className="text-sm font-bold text-slate-900">School-Specific Rate</p>
+              <p className="text-[10px] sm:text-[11px] font-semibold text-slate-500">Billing Model</p>
+              <p className="text-xs sm:text-sm font-bold text-slate-900">School-Specific Rate</p>
             </div>
           </div>
         </div>
 
         {/* Tab Controls */}
-        <div className="grid grid-cols-4 gap-1 p-1.5 bg-slate-100 rounded-2xl border border-slate-200/80 max-w-2xl mx-auto">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-1 p-1 bg-slate-100 rounded-2xl border border-slate-200/80 max-w-2xl mx-auto">
           {[
             { id: 'home', label: 'My Students', icon: User },
             { id: 'book', label: 'Book & Pay', icon: Wallet },
@@ -313,7 +319,7 @@ export default function ParentApp() {
                 key={tab.id}
                 type="button"
                 onClick={() => setActiveTab(tab.id)}
-                className={`relative py-2.5 px-2 sm:px-4 text-xs sm:text-sm font-semibold rounded-xl transition-colors cursor-pointer flex items-center justify-center gap-2 select-none ${
+                className={`relative py-2.5 px-2 sm:px-4 text-xs sm:text-sm font-semibold rounded-xl transition-colors cursor-pointer flex items-center justify-center gap-1.5 select-none touch-manipulation min-h-[44px] ${
                   isSelected ? 'text-slate-900 font-bold' : 'text-slate-500 hover:text-slate-800'
                 }`}
               >
@@ -324,9 +330,9 @@ export default function ParentApp() {
                     transition={{ type: 'spring', stiffness: 500, damping: 35 }}
                   />
                 )}
-                <span className="relative z-10 flex items-center justify-center gap-1.5 sm:gap-2 truncate">
-                  <Icon size={16} className={isSelected ? 'text-brand-600' : 'text-slate-400'} />
-                  <span className="truncate">{tab.label}</span>
+                <span className="relative z-10 flex items-center justify-center gap-1.5 truncate">
+                  <Icon size={15} className={`shrink-0 ${isSelected ? 'text-brand-600' : 'text-slate-400'}`} />
+                  <span className="truncate text-[11px] sm:text-xs md:text-sm">{tab.label}</span>
                 </span>
               </button>
             );
@@ -683,7 +689,7 @@ export default function ParentApp() {
             </motion.div>
           )}
         </AnimatePresence>
-      </main>
-    </div>
+      </div>
+    </DashboardLayout>
   );
 }

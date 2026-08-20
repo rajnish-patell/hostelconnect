@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import toast from 'react-hot-toast';
 import { Video, Lock, Mail, Phone, Eye, EyeOff, KeyRound, Building2, User, ShieldCheck } from 'lucide-react';
@@ -37,8 +37,9 @@ export default function Login() {
     const newErrors = {};
 
     if (role === 'superadmin') {
-      const emailErr = validateEmail(form.email);
-      if (emailErr) newErrors.email = emailErr;
+      if (!form.email || !form.email.trim()) {
+        newErrors.email = 'Email or Super Admin username is required';
+      }
       const passErr = validatePassword(form.password, 4);
       if (passErr) newErrors.password = passErr;
     } else if (role === 'school') {
@@ -138,6 +139,16 @@ export default function Login() {
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col justify-center py-12 px-4 sm:px-6 lg:px-8">
       <div className="sm:mx-auto sm:w-full sm:max-w-md">
+        {/* Back Link */}
+        <div className="mb-6 text-center">
+          <Link
+            to="/"
+            className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-500 hover:text-brand-600 transition"
+          >
+            <span>← Back to Home</span>
+          </Link>
+        </div>
+
         {/* Brand Header */}
         <div className="text-center space-y-2">
           <div className="inline-flex items-center justify-center w-12 h-12 rounded-2xl bg-brand-600 text-white shadow-sm shadow-brand-600/25 mx-auto">

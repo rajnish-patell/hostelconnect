@@ -1,9 +1,13 @@
 const crypto = require('crypto');
 const prisma = require('../utils/prisma');
+const { getRazorpay, isConfigured } = require('../utils/razorpay');
+const { auditFromReq } = require('../utils/audit');
+const config = require('../config');
 
-// School or SuperAdmin: Offline / Manual Recharge
+// ─── School or SuperAdmin: Offline / Manual Recharge ────────────────────────
 exports.manualRecharge = async (req, res, next) => {
   try {
+    const audit = auditFromReq(req);
     const { studentId, amount, notes, paymentMode } = req.body;
 
     const rechargeAmount = parseFloat(amount);
@@ -61,6 +65,8 @@ exports.manualRecharge = async (req, res, next) => {
       }),
     ]);
 
+    audit('manual_recharge', 'recharge', recharge.id, { amount: rechargeAmount, studentId: student.id });
+
     res.status(201).json({
       success: true,
       message: `Recharge of ₹${rechargeAmount.toFixed(2)} successful`,
@@ -74,9 +80,10 @@ exports.manualRecharge = async (req, res, next) => {
   }
 };
 
-// Parent: Create online recharge order (Authoritative Server-Side Pricing)
+// ─── Parent: Create online recharge order (Real Razorpay) ───────────────────
 exports.createOnlineRechargeOrder = async (req, res, next) => {
   try {
+    const audit = auditFromReq(req);
     const parentId = req.user.id;
     const { studentId, requestedDurationMinutes, durationMinutes, amount } = req.body;
 
@@ -119,7 +126,6 @@ exports.createOnlineRechargeOrder = async (req, res, next) => {
 
     const dur = parseInt(requestedDurationMinutes || durationMinutes, 10);
     if (!isNaN(dur) && dur > 0) {
-      // Parent chose specific call duration
       if (dur < minDuration) {
         return res.status(400).json({
           success: false,
@@ -136,7 +142,6 @@ exports.createOnlineRechargeOrder = async (req, res, next) => {
       // Authoritative server-side calculation
       finalAmount = parseFloat((finalDuration * pricePerMinute).toFixed(2));
     } else if (amount) {
-      // Fallback manual amount recharge
       const parsedAmt = parseFloat(amount);
       if (isNaN(parsedAmt) || parsedAmt < 10 || parsedAmt > 50000) {
         return res.status(400).json({ success: false, message: 'Recharge amount must be between ₹10 and ₹50,000' });
@@ -147,9 +152,31 @@ exports.createOnlineRechargeOrder = async (req, res, next) => {
       return res.status(400).json({ success: false, message: 'Please specify call duration or recharge amount' });
     }
 
-    // 3. Generate Razorpay / UPI order reference
-    const timestamp = Date.now();
-    const razorpayOrderId = `order_${timestamp}_${Math.random().toString(36).substring(2, 7)}`;
+    // 3. Create REAL Razorpay order (or fallback for dev without keys)
+    let razorpayOrderId;
+    const razorpay = getRazorpay();
+
+    if (razorpay) {
+      // Real Razorpay SDK order creation
+      const order = await razorpay.orders.create({
+        amount: Math.round(finalAmount * 100), // Razorpay uses paise
+        currency: 'INR',
+        receipt: `rcpt_${Date.now()}_${sId}`,
+        notes: {
+          studentId: String(student.id),
+          studentName: student.name,
+          schoolId: String(school.id),
+          schoolName: school.name,
+          parentId: String(parentId),
+          durationMinutes: String(finalDuration),
+        },
+      });
+      razorpayOrderId = order.id;
+    } else {
+      // Development fallback when Razorpay keys not configured
+      razorpayOrderId = `order_dev_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+      console.warn('⚠️  Razorpay not configured — using dev order ID:', razorpayOrderId);
+    }
 
     // 4. Create pending recharge record with frozen pricing snapshot
     const recharge = await prisma.recharge.create({
@@ -170,8 +197,11 @@ exports.createOnlineRechargeOrder = async (req, res, next) => {
       },
     });
 
-    const upiVpa = process.env.UPI_VPA || 'schoolhostel@upi';
-    const upiDeepLink = `upi://pay?pa=${encodeURIComponent(upiVpa)}&pn=${encodeURIComponent(school.name)}&am=${finalAmount.toFixed(2)}&cu=INR&tn=${encodeURIComponent(`Call with ${student.name} (${finalDuration}m)`)}`;
+    audit('payment_order_created', 'recharge', recharge.id, {
+      amount: finalAmount,
+      razorpayOrderId,
+      studentId: student.id,
+    });
 
     res.status(201).json({
       success: true,
@@ -186,8 +216,8 @@ exports.createOnlineRechargeOrder = async (req, res, next) => {
         amount: finalAmount,
         currency: 'INR',
         razorpayOrderId,
-        razorpayKeyId: process.env.RAZORPAY_KEY_ID || 'rzp_test_hostel_calling',
-        upiDeepLink,
+        razorpayKeyId: config.razorpay.keyId || '',
+        razorpayConfigured: isConfigured(),
       },
     });
   } catch (error) {
@@ -195,9 +225,10 @@ exports.createOnlineRechargeOrder = async (req, res, next) => {
   }
 };
 
-// Confirm online payment (Razorpay callback / client verification)
+// ─── Confirm online payment (Razorpay callback / client verification) ───────
 exports.confirmOnlineRecharge = async (req, res, next) => {
   try {
+    const audit = auditFromReq(req);
     const { rechargeId, transactionId, paymentId, razorpayPaymentId, razorpayOrderId, razorpaySignature } = req.body;
 
     const rId = parseInt(rechargeId, 10);
@@ -224,18 +255,29 @@ exports.confirmOnlineRecharge = async (req, res, next) => {
       });
     }
 
-    // Razorpay cryptographic signature verification if secret is present
-    const payId = razorpayPaymentId || paymentId || transactionId || `PAY_${Date.now()}`;
+    const payId = razorpayPaymentId || paymentId || transactionId;
     const ordId = razorpayOrderId || recharge.razorpayOrderId;
 
-    if (process.env.RAZORPAY_KEY_SECRET && razorpaySignature && ordId) {
+    if (!payId) {
+      return res.status(400).json({ success: false, message: 'Payment ID is required' });
+    }
+
+    // Razorpay cryptographic signature verification
+    const keySecret = config.razorpay.keySecret;
+    if (keySecret && razorpaySignature && ordId) {
       const generatedSignature = crypto
-        .createHmac('sha256', process.env.RAZORPAY_KEY_SECRET)
+        .createHmac('sha256', keySecret)
         .update(`${ordId}|${payId}`)
         .digest('hex');
 
       if (generatedSignature !== razorpaySignature) {
+        audit('payment_signature_failed', 'recharge', recharge.id, { razorpayOrderId: ordId });
         return res.status(400).json({ success: false, message: 'Invalid payment signature. Verification failed.' });
+      }
+    } else if (keySecret) {
+      // Keys configured but signature not provided — reject in production
+      if (process.env.NODE_ENV === 'production') {
+        return res.status(400).json({ success: false, message: 'Payment signature is required for verification' });
       }
     }
 
@@ -248,6 +290,7 @@ exports.confirmOnlineRecharge = async (req, res, next) => {
           status: 'success',
           transactionId: payId,
           razorpayPaymentId: payId,
+          razorpaySignature: razorpaySignature || null,
         },
       }),
       prisma.student.update({
@@ -262,10 +305,32 @@ exports.confirmOnlineRecharge = async (req, res, next) => {
           balanceAfter: newBalance,
           referenceType: 'recharge',
           referenceId: String(recharge.id),
-          description: `UPI video call recharge (${recharge.durationMinutes || Math.floor(recharge.amount / (recharge.pricePerMinute || 2.5))} mins @ ₹${recharge.pricePerMinute || 2.5}/min)`,
+          description: `Video call recharge (${recharge.durationMinutes || Math.floor(recharge.amount / (recharge.pricePerMinute || 2.5))} mins @ ₹${recharge.pricePerMinute || 2.5}/min)`,
         },
       }),
     ]);
+
+    audit('payment_verified', 'recharge', recharge.id, {
+      amount: recharge.amount,
+      paymentId: payId,
+      newBalance,
+    });
+
+    // Create notification for the parent
+    try {
+      await prisma.notification.create({
+        data: {
+          userId: recharge.parentId || req.user.id,
+          userRole: 'parent',
+          title: 'Payment Successful',
+          message: `₹${recharge.amount.toFixed(2)} credited for ${recharge.student.name} (${recharge.durationMinutes} mins)`,
+          type: 'payment',
+          metadata: JSON.stringify({ rechargeId: recharge.id, amount: recharge.amount }),
+        },
+      });
+    } catch (notifErr) {
+      console.error('Notification create error:', notifErr.message);
+    }
 
     res.json({
       success: true,
@@ -278,28 +343,51 @@ exports.confirmOnlineRecharge = async (req, res, next) => {
   }
 };
 
-// Razorpay Webhook Endpoint
+// ─── Razorpay Webhook Endpoint — Idempotent Processing ─────────────────────
 exports.handlePaymentWebhook = async (req, res, next) => {
   try {
+    // 1. Verify webhook signature
     const signature = req.headers['x-razorpay-signature'];
-    const webhookSecret = process.env.RAZORPAY_WEBHOOK_SECRET;
+    const webhookSecret = config.razorpay.webhookSecret;
 
     if (webhookSecret && signature) {
-      const shasum = crypto.createHmac('sha256', webhookSecret);
-      shasum.update(JSON.stringify(req.body));
-      const digest = shasum.digest('hex');
+      const expectedSignature = crypto
+        .createHmac('sha256', webhookSecret)
+        .update(typeof req.rawBody === 'string' ? req.rawBody : JSON.stringify(req.body))
+        .digest('hex');
 
-      if (digest !== signature) {
+      if (expectedSignature !== signature) {
+        console.error('Webhook signature verification failed');
         return res.status(400).json({ status: 'invalid_signature' });
       }
+    } else if (webhookSecret && !signature) {
+      // Secret configured but no signature in request — suspicious
+      console.error('Webhook received without signature');
+      return res.status(400).json({ status: 'missing_signature' });
     }
 
     const event = req.body.event;
-    const payload = req.body.payload?.payment?.entity;
+    const payload = req.body.payload;
+    const webhookEventId = req.body.event_id || `evt_${Date.now()}`;
 
-    if (event === 'payment.captured' && payload) {
-      const razorpayOrderId = payload.order_id;
-      const razorpayPaymentId = payload.id;
+    console.log(`📩 Webhook received: ${event} (${webhookEventId})`);
+
+    // 2. Idempotency check — has this event already been processed?
+    const existingProcessed = await prisma.recharge.findUnique({
+      where: { webhookEventId },
+    });
+    if (existingProcessed) {
+      console.log(`⏩ Webhook ${webhookEventId} already processed — skipping`);
+      return res.json({ status: 'already_processed' });
+    }
+
+    // 3. Handle different event types
+    if (event === 'payment.captured' || event === 'order.paid') {
+      const paymentEntity = payload?.payment?.entity;
+      if (!paymentEntity) return res.json({ status: 'no_payment_entity' });
+
+      const razorpayOrderId = paymentEntity.order_id;
+      const razorpayPaymentId = paymentEntity.id;
 
       const recharge = await prisma.recharge.findFirst({
         where: { razorpayOrderId },
@@ -315,6 +403,7 @@ exports.handlePaymentWebhook = async (req, res, next) => {
               status: 'success',
               transactionId: razorpayPaymentId,
               razorpayPaymentId,
+              webhookEventId,
             },
           }),
           prisma.student.update({
@@ -333,17 +422,200 @@ exports.handlePaymentWebhook = async (req, res, next) => {
             },
           }),
         ]);
+
+        console.log(`✅ Webhook: Payment ${razorpayPaymentId} credited for recharge #${recharge.id}`);
+      } else if (recharge && recharge.status === 'success') {
+        // Already processed via client callback — just store the webhook event ID
+        await prisma.recharge.update({
+          where: { id: recharge.id },
+          data: { webhookEventId },
+        });
+        console.log(`⏩ Webhook: Recharge #${recharge.id} already successful`);
+      }
+    } else if (event === 'payment.failed') {
+      const paymentEntity = payload?.payment?.entity;
+      if (paymentEntity) {
+        const razorpayOrderId = paymentEntity.order_id;
+        const recharge = await prisma.recharge.findFirst({
+          where: { razorpayOrderId, status: 'pending' },
+        });
+
+        if (recharge) {
+          await prisma.recharge.update({
+            where: { id: recharge.id },
+            data: {
+              status: 'failed',
+              failureReason: paymentEntity.error_description || paymentEntity.error_reason || 'Payment failed',
+              webhookEventId,
+            },
+          });
+          console.log(`❌ Webhook: Payment failed for recharge #${recharge.id}`);
+        }
+      }
+    } else if (event === 'refund.created' || event === 'refund.processed') {
+      const refundEntity = payload?.refund?.entity;
+      if (refundEntity) {
+        const razorpayPaymentId = refundEntity.payment_id;
+        const recharge = await prisma.recharge.findFirst({
+          where: { razorpayPaymentId },
+        });
+
+        if (recharge) {
+          const refundAmount = (refundEntity.amount || 0) / 100; // paise to rupees
+          await prisma.recharge.update({
+            where: { id: recharge.id },
+            data: {
+              refundId: refundEntity.id,
+              refundAmount,
+              refundStatus: event === 'refund.processed' ? 'processed' : 'initiated',
+              refundedAt: new Date(),
+              status: refundAmount >= recharge.amount ? 'refunded' : recharge.status,
+              webhookEventId,
+            },
+          });
+
+          // Debit wallet for refund if it was a full refund
+          if (event === 'refund.processed' && refundAmount > 0) {
+            const student = await prisma.student.findUnique({ where: { id: recharge.studentId } });
+            if (student) {
+              const newBalance = Math.max(0, parseFloat((student.walletBalance - refundAmount).toFixed(2)));
+              await prisma.$transaction([
+                prisma.student.update({
+                  where: { id: recharge.studentId },
+                  data: { walletBalance: newBalance },
+                }),
+                prisma.walletTransaction.create({
+                  data: {
+                    studentId: recharge.studentId,
+                    type: 'debit',
+                    amount: refundAmount,
+                    balanceAfter: newBalance,
+                    referenceType: 'refund',
+                    referenceId: String(recharge.id),
+                    description: `Refund processed (₹${refundAmount.toFixed(2)})`,
+                  },
+                }),
+              ]);
+            }
+          }
+
+          console.log(`💸 Webhook: Refund ${refundEntity.id} for recharge #${recharge.id}`);
+        }
       }
     }
 
+    // Always return 200 to Razorpay
     res.json({ status: 'ok' });
   } catch (error) {
     console.error('Webhook processing error:', error);
-    res.status(500).json({ status: 'error' });
+    // Return 200 even on error to prevent Razorpay retries for non-transient failures
+    res.json({ status: 'error', message: error.message });
   }
 };
 
-// Get wallet + transactions
+// ─── SuperAdmin: Initiate Refund ────────────────────────────────────────────
+exports.initiateRefund = async (req, res, next) => {
+  try {
+    const audit = auditFromReq(req);
+    const { rechargeId, amount, reason } = req.body;
+
+    const rId = parseInt(rechargeId, 10);
+    if (isNaN(rId)) {
+      return res.status(400).json({ success: false, message: 'Invalid recharge ID' });
+    }
+
+    const recharge = await prisma.recharge.findUnique({
+      where: { id: rId },
+      include: { student: true },
+    });
+
+    if (!recharge) {
+      return res.status(404).json({ success: false, message: 'Recharge not found' });
+    }
+
+    if (recharge.status !== 'success') {
+      return res.status(400).json({ success: false, message: 'Only successful payments can be refunded' });
+    }
+
+    if (recharge.refundId) {
+      return res.status(400).json({ success: false, message: 'Refund already initiated for this payment' });
+    }
+
+    const refundAmount = amount ? parseFloat(amount) : recharge.amount;
+    if (refundAmount <= 0 || refundAmount > recharge.amount) {
+      return res.status(400).json({ success: false, message: 'Invalid refund amount' });
+    }
+
+    const razorpay = getRazorpay();
+    let refundId;
+
+    if (razorpay && recharge.razorpayPaymentId && !recharge.razorpayPaymentId.startsWith('pay_dev_')) {
+      // Real Razorpay refund
+      const refund = await razorpay.payments.refund(recharge.razorpayPaymentId, {
+        amount: Math.round(refundAmount * 100),
+        notes: {
+          reason: reason || 'Admin initiated refund',
+          rechargeId: String(recharge.id),
+        },
+      });
+      refundId = refund.id;
+    } else {
+      // Dev mode refund
+      refundId = `rfnd_dev_${Date.now()}`;
+    }
+
+    // Update recharge record
+    const updatedRecharge = await prisma.recharge.update({
+      where: { id: recharge.id },
+      data: {
+        refundId,
+        refundAmount,
+        refundStatus: 'initiated',
+        refundedAt: new Date(),
+        status: refundAmount >= recharge.amount ? 'refunded' : 'success',
+        notes: `${recharge.notes || ''} | Refund: ${reason || 'Admin initiated'}`.trim(),
+      },
+    });
+
+    // Debit wallet immediately for dev mode
+    if (!razorpay || (recharge.razorpayPaymentId && recharge.razorpayPaymentId.startsWith('pay_dev_'))) {
+      const newBalance = Math.max(0, parseFloat((recharge.student.walletBalance - refundAmount).toFixed(2)));
+      await prisma.$transaction([
+        prisma.student.update({
+          where: { id: recharge.studentId },
+          data: { walletBalance: newBalance },
+        }),
+        prisma.walletTransaction.create({
+          data: {
+            studentId: recharge.studentId,
+            type: 'debit',
+            amount: refundAmount,
+            balanceAfter: newBalance,
+            referenceType: 'refund',
+            referenceId: String(recharge.id),
+            description: `Refund: ₹${refundAmount.toFixed(2)} (${reason || 'Admin initiated'})`,
+          },
+        }),
+      ]);
+    }
+
+    audit('refund_initiated', 'recharge', recharge.id, {
+      refundId,
+      refundAmount,
+      reason,
+    });
+
+    res.json({
+      success: true,
+      message: `Refund of ₹${refundAmount.toFixed(2)} initiated successfully`,
+      data: updatedRecharge,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// ─── Get wallet + transactions ──────────────────────────────────────────────
 exports.getWallet = async (req, res, next) => {
   try {
     let studentId = req.user.id;
@@ -394,7 +666,7 @@ exports.getWallet = async (req, res, next) => {
   }
 };
 
-// Super Admin / School Admin / Parent: Payment Transaction History
+// ─── Payment Transaction History ────────────────────────────────────────────
 exports.listTransactions = async (req, res, next) => {
   try {
     const where = {};

@@ -27,15 +27,15 @@ export default function Input({
   return (
     <div className="w-full space-y-1.5">
       {label && (
-        <label htmlFor={inputId} className="block text-xs font-semibold text-slate-700">
-          {label} {required && <span className="text-rose-500">*</span>}
+        <label htmlFor={inputId} className="block text-xs font-bold text-[#1C252E]">
+          {label} {required && <span className="text-[#FF5630]">*</span>}
         </label>
       )}
 
       <div className="relative flex items-center">
         {Icon && (
-          <div className="absolute left-3.5 text-slate-400 pointer-events-none flex items-center justify-center">
-            <Icon size={17} />
+          <div className="absolute left-3.5 text-[#919EAB] pointer-events-none flex items-center justify-center">
+            <Icon size={18} />
           </div>
         )}
 
@@ -53,27 +53,27 @@ export default function Input({
           autoComplete={autoComplete}
           aria-invalid={!!error}
           aria-describedby={error ? errorId : helperText ? helperId : undefined}
-          className={`w-full bg-white border rounded-xl text-sm text-slate-900 placeholder:text-slate-400 transition-all duration-150 outline-none ${
+          className={`w-full bg-[#F9FAFB] hover:bg-white focus:bg-white border rounded-xl text-sm text-[#1C252E] font-medium placeholder:text-[#919EAB] transition-all duration-200 outline-none touch-manipulation ${
             Icon ? 'pl-10' : 'pl-3.5'
-          } ${rightElement ? 'pr-10' : 'pr-3.5'} py-2.5 ${
+          } ${rightElement ? 'pr-10' : 'pr-3.5'} py-3 sm:py-2.5 ${
             error
-              ? 'border-rose-400 focus:border-rose-500 focus:ring-2 focus:ring-rose-500/20'
-              : 'border-slate-300 hover:border-slate-400 focus:border-brand-600 focus:ring-2 focus:ring-brand-500/20'
+              ? 'border-[#FF5630] focus:border-[#FF5630] focus:ring-1 focus:ring-[#FF5630]'
+              : 'border-[rgba(145,158,171,0.2)] hover:border-[rgba(145,158,171,0.4)] focus:border-[#1C252E] focus:ring-1 focus:ring-[#1C252E]'
           } ${className}`}
           {...props}
         />
 
         {rightElement && (
-          <div className="absolute right-3 text-slate-400 flex items-center justify-center">
+          <div className="absolute right-3 text-[#919EAB] flex items-center justify-center">
             {rightElement}
           </div>
         )}
       </div>
 
       {error ? (
-        <p id={errorId} className="text-xs text-rose-500 font-medium">{error}</p>
+        <p id={errorId} className="text-xs text-[#FF5630] font-semibold">{error}</p>
       ) : helperText ? (
-        <p id={helperId} className="text-xs text-slate-500">{helperText}</p>
+        <p id={helperId} className="text-xs text-[#637381]">{helperText}</p>
       ) : null}
     </div>
   );
