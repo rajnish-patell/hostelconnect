@@ -1,3 +1,5 @@
+import { signOutSupabase } from './supabase';
+
 export function getUser() {
   try {
     const user = localStorage.getItem('user');
@@ -18,12 +20,14 @@ export function setAuth(token, user) {
 
 export function logout() {
   try {
+    signOutSupabase();
     localStorage.removeItem('token');
     localStorage.removeItem('user');
     sessionStorage.clear();
   } catch (e) {
     console.error('Logout error:', e);
   }
+
 
   // Ensure scroll lock and pointer events are always restored
   if (typeof document !== 'undefined') {

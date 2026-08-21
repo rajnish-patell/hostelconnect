@@ -1,14 +1,17 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import toast from 'react-hot-toast';
-import { Video, Lock, Mail, Phone, Eye, EyeOff, KeyRound, Building2, User, ShieldCheck } from 'lucide-react';
+import { Video, Lock, Mail, Phone, Eye, EyeOff, KeyRound, Building2, User, ShieldCheck, RefreshCw, ArrowLeft } from 'lucide-react';
 import api from '../api';
 import { setAuth } from '../utils/auth';
 import Button from '../components/ui/Button';
 import Input from '../components/ui/Input';
+import OtpInput from '../components/ui/OtpInput';
 import Modal from '../components/ui/Modal';
 import { validateEmail, validatePhone, validatePassword, validateText, validateOtp } from '../utils/validation';
+import { requestSupabaseEmailOtp, verifySupabaseEmailOtp, isSupabaseConfigured } from '../utils/supabase';
+
 
 export default function Login() {
   const [role, setRole] = useState('superadmin');
@@ -24,6 +27,8 @@ export default function Login() {
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [otpSent, setOtpSent] = useState(false);
+  const [parentChannel, setParentChannel] = useState('email'); // 'email' or 'mobile'
+  const [resendCooldown, setResendCooldown] = useState(0);
 
   // Dynamic Forgot Password Modal State
   const [forgotModalOpen, setForgotModalOpen] = useState(false);
@@ -33,8 +38,18 @@ export default function Login() {
   const [newResetPassword, setNewResetPassword] = useState('');
   const [resetLoading, setResetLoading] = useState(false);
   const [resetError, setResetError] = useState('');
-  const [displayedOtp, setDisplayedOtp] = useState('');
   const navigate = useNavigate();
+
+  // Cooldown countdown effect for Resend OTP
+  useEffect(() => {
+    let timer;
+    if (resendCooldown > 0) {
+      timer = setInterval(() => {
+        setResendCooldown((prev) => prev - 1);
+      }, 1000);
+    }
+    return () => clearInterval(timer);
+  }, [resendCooldown]);
 
   const handleChange = (e) => {
     const { name, value } = e.target;
@@ -66,8 +81,13 @@ export default function Login() {
       const passErr = validatePassword(form.password, 4);
       if (passErr) newErrors.password = passErr;
     } else if (role === 'parent') {
-      const emailErr = validateEmail(form.email, 'Email address');
-      if (emailErr) newErrors.email = emailErr;
+      if (parentChannel === 'email') {
+        const emailErr = validateEmail(form.email, 'Email address');
+        if (emailErr) newErrors.email = emailErr;
+      } else {
+        const phoneErr = validatePhone(form.mobile, 'Mobile number');
+        if (phoneErr) newErrors.mobile = phoneErr;
+      }
       if (otpSent) {
         const otpErr = validateOtp(form.otp);
         if (otpErr) newErrors.otp = otpErr;
@@ -76,6 +96,38 @@ export default function Login() {
 
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
+  };
+
+  const handleResendOtp = async () => {
+    if (resendCooldown > 0 || loading) return;
+    const target = parentChannel === 'email' ? form.email.trim().toLowerCase() : form.mobile.trim();
+    if (!target) {
+      toast.error(`Please enter a valid ${parentChannel === 'email' ? 'email address' : 'mobile number'}`);
+      return;
+    }
+    setLoading(true);
+    try {
+      if (parentChannel === 'email' && isSupabaseConfigured()) {
+        const supaRes = await requestSupabaseEmailOtp(target);
+        if (supaRes.error) {
+          toast.error(supaRes.error.message || 'Failed to resend OTP');
+          return;
+        }
+        toast.success('Verification code resent to your email.');
+      } else {
+        const res = await api.post('/auth/parent/resend-otp', {
+          destination: target,
+          email: parentChannel === 'email' ? target : '',
+          mobile: parentChannel === 'mobile' ? target : '',
+        });
+        toast.success(res.data.message || 'Verification code resent!');
+      }
+      setResendCooldown(60);
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Failed to resend OTP. Please try again.');
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleSubmit = async (e) => {
@@ -113,37 +165,71 @@ export default function Login() {
         toast.success('Welcome Student!');
         navigate('/student', { replace: true });
       } else if (role === 'parent') {
-        const cleanEmail = form.email.trim().toLowerCase();
+        const targetDestination = parentChannel === 'email' ? form.email.trim().toLowerCase() : form.mobile.trim();
 
         if (!otpSent) {
-          const reqRes = await api.post('/auth/parent/request-otp', { email: cleanEmail });
-          setOtpSent(true);
-          const returnedCode = reqRes.data?.data?.testOtp || reqRes.data?.data?.otpCode;
-          if (returnedCode) {
-            setDisplayedOtp(returnedCode);
-            setForm((prev) => ({ ...prev, otp: returnedCode }));
+          if (parentChannel === 'email' && isSupabaseConfigured()) {
+            const supaRes = await requestSupabaseEmailOtp(targetDestination);
+            if (supaRes.error) {
+              toast.error(supaRes.error.message || 'Failed to send OTP email');
+              return;
+            }
+            setOtpSent(true);
+            setResendCooldown(60);
+            toast.success('Verification code sent to your email.', { duration: 6000 });
+          } else {
+            const reqRes = await api.post('/auth/parent/request-otp', {
+              destination: targetDestination,
+              email: parentChannel === 'email' ? targetDestination : '',
+              mobile: parentChannel === 'mobile' ? targetDestination : '',
+            });
+            setOtpSent(true);
+            setResendCooldown(60);
+            const defaultMsg = parentChannel === 'email' 
+              ? 'Verification code sent to your email.' 
+              : 'Verification code sent to your mobile phone.';
+            toast.success(reqRes.data.message || defaultMsg, { duration: 6000 });
           }
-          toast.success(reqRes.data.message || `OTP sent to ${cleanEmail}!`, { duration: 7000 });
         } else {
+          let supabaseUserId = null;
+          if (parentChannel === 'email' && isSupabaseConfigured()) {
+            const supaVer = await verifySupabaseEmailOtp(targetDestination, form.otp.trim());
+            if (supaVer.error) {
+              toast.error(supaVer.error.message || 'Invalid or expired verification code.');
+              return;
+            }
+            supabaseUserId = supaVer.data?.user?.id || null;
+          }
+
           res = await api.post('/auth/parent/verify-otp', {
-            email: cleanEmail,
+            destination: targetDestination,
+            email: parentChannel === 'email' ? targetDestination : '',
+            mobile: parentChannel === 'mobile' ? targetDestination : '',
             otp: form.otp.trim(),
+            supabaseUserId,
           });
-          setAuth(res.data.data.token, res.data.data.user);
+
+          const userData = {
+            ...res.data.data.user,
+            ...(supabaseUserId ? { supabaseUserId } : {}),
+          };
+
+          setAuth(res.data.data.token, userData);
           toast.success('Welcome Parent!');
           navigate('/parent', { replace: true });
         }
       }
     } catch (err) {
       if (!err.response) {
-        toast.error('Cannot connect to backend server. Please verify network.', { duration: 5000 });
+        toast.error('Cannot connect to server. Please verify network connection.', { duration: 5000 });
       } else {
-        toast.error(err.response?.data?.message || 'Authentication failed. Please verify credentials.');
+        toast.error(err.response?.data?.message || 'Authentication failed. Invalid or expired verification code.');
       }
     } finally {
       setLoading(false);
     }
   };
+
 
   const handleRequestResetToken = async (e) => {
     e.preventDefault();
@@ -420,51 +506,140 @@ export default function Login() {
                 )}
 
                 {role === 'parent' && (
-                  <>
-                    <Input
-                      label="Registered Parent Email"
-                      type="email"
-                      name="email"
-                      value={form.email}
-                      onChange={handleChange}
-                      error={errors.email}
-                      required
-                      icon={Mail}
-                      placeholder="patelrajnish47@gmail.com"
-                      autoComplete="email"
-                    />
-                    {otpSent && (
-                      <motion.div
-                        initial={{ opacity: 0, height: 0 }}
-                        animate={{ opacity: 1, height: 'auto' }}
-                        transition={{ duration: 0.2 }}
-                        className="space-y-3"
-                      >
-                        {displayedOtp && (
-                          <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-lg text-center my-2 shadow-xs">
-                            <p className="text-[11px] text-emerald-800 font-bold uppercase tracking-wider">Your Login Verification Code</p>
-                            <p className="text-2xl font-mono font-extrabold text-emerald-950 tracking-widest my-1">{displayedOtp}</p>
-                            <p className="text-[11px] text-emerald-700 font-medium">Code auto-filled! Click "Sign In" below to log in.</p>
-                          </div>
+                  <div className="space-y-4">
+                    {!otpSent ? (
+                      <>
+                        <div className="text-center mb-1">
+                          <p className="text-xs font-medium text-slate-500">Choose Parent Authentication Method:</p>
+                        </div>
+                        <div className="grid grid-cols-2 gap-2 p-1 bg-slate-100/90 rounded-xl border border-slate-200/60 mb-3">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setParentChannel('sms');
+                              setErrors({});
+                            }}
+                            className={`py-2 px-3 text-xs font-semibold rounded-lg transition cursor-pointer flex items-center justify-center gap-1.5 ${
+                              parentChannel === 'sms'
+                                ? 'bg-white text-brand-700 shadow-sm border border-slate-200/80 font-bold'
+                                : 'text-slate-600 hover:text-slate-900'
+                            }`}
+                          >
+                            <Phone size={14} />
+                            <span>Continue with SMS OTP</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setParentChannel('email');
+                              setErrors({});
+                            }}
+                            className={`py-2 px-3 text-xs font-semibold rounded-lg transition cursor-pointer flex items-center justify-center gap-1.5 ${
+                              parentChannel === 'email'
+                                ? 'bg-white text-brand-700 shadow-sm border border-slate-200/80 font-bold'
+                                : 'text-slate-600 hover:text-slate-900'
+                            }`}
+                          >
+                            <Mail size={14} />
+                            <span>Continue with Email OTP</span>
+                          </button>
+                        </div>
+
+                        {parentChannel === 'email' ? (
+                          <Input
+                            label="Registered Parent Email"
+                            type="email"
+                            name="email"
+                            value={form.email}
+                            onChange={handleChange}
+                            error={errors.email}
+                            required
+                            icon={Mail}
+                            placeholder="patelrajnish47@gmail.com"
+                            autoComplete="email"
+                            helperText="We will send a 6-digit verification code to your registered email via Resend"
+                          />
+                        ) : (
+                          <Input
+                            label="Registered Mobile Phone"
+                            type="tel"
+                            name="mobile"
+                            value={form.mobile}
+                            onChange={handleChange}
+                            error={errors.mobile}
+                            required
+                            icon={Phone}
+                            placeholder="9876543210"
+                            autoComplete="tel"
+                            maxLength={10}
+                            helperText="We will send a 6-digit SMS OTP to your registered 10-digit mobile number"
+                          />
                         )}
-                        <Input
-                          label="6-Digit Email Verification OTP"
-                          type="text"
-                          inputMode="numeric"
-                          name="otp"
+                      </>
+                    ) : (
+                      <motion.div
+                        initial={{ opacity: 0, scale: 0.98 }}
+                        animate={{ opacity: 1, scale: 1 }}
+                        transition={{ duration: 0.2 }}
+                        className="space-y-4"
+                      >
+                        <div className="flex items-center justify-between p-3.5 bg-brand-50/70 border border-brand-200/80 rounded-xl text-xs">
+                          <div>
+                            <span className="text-slate-500 font-medium">OTP Code sent to: </span>
+                            <span className="font-bold text-slate-800 font-mono">
+                              {parentChannel === 'email'
+                                ? (form.email.replace(/(.{1,2}).*(@.*)/, '$1***$2'))
+                                : (form.mobile.replace(/(\d{2})\d+(\d{3})/, '$1*****$2'))}
+                            </span>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setOtpSent(false);
+                              setForm((prev) => ({ ...prev, otp: '' }));
+                            }}
+                            className="inline-flex items-center gap-1 text-brand-700 font-bold hover:underline cursor-pointer"
+                          >
+                            <ArrowLeft size={13} />
+                            <span>Change {parentChannel === 'email' ? 'Email' : 'Mobile'}</span>
+                          </button>
+                        </div>
+
+                        <OtpInput
                           value={form.otp}
-                          onChange={handleChange}
-                          error={errors.otp}
-                          required
-                          maxLength={6}
-                          icon={KeyRound}
-                          placeholder="123456"
-                          className="font-mono text-center tracking-widest text-base font-bold"
-                          helperText="Enter 6-digit verification code sent to your email"
+                          onChange={(newOtp) => {
+                            setForm((prev) => ({ ...prev, otp: newOtp }));
+                            if (errors.otp) setErrors((prev) => ({ ...prev, otp: null }));
+                          }}
+                          disabled={loading}
+                          hasError={!!errors.otp}
                         />
+                        {errors.otp && (
+                          <p className="text-xs font-semibold text-red-600 text-center">{errors.otp}</p>
+                        )}
+
+
+                        <div className="flex items-center justify-between text-xs pt-1">
+                          <span className="text-slate-500">Didn't receive the OTP code?</span>
+                          <button
+                            type="button"
+                            onClick={handleResendOtp}
+                            disabled={resendCooldown > 0 || loading}
+                            className={`inline-flex items-center gap-1 font-semibold transition ${
+                              resendCooldown > 0 || loading
+                                ? 'text-slate-400 cursor-not-allowed'
+                                : 'text-brand-600 hover:text-brand-700 hover:underline cursor-pointer'
+                            }`}
+                          >
+                            <RefreshCw size={13} className={loading ? 'animate-spin' : ''} />
+                            <span>
+                              {resendCooldown > 0 ? `Resend OTP (${resendCooldown}s)` : 'Resend OTP'}
+                            </span>
+                          </button>
+                        </div>
                       </motion.div>
                     )}
-                  </>
+                  </div>
                 )}
               </motion.div>
             </AnimatePresence>

@@ -7,8 +7,15 @@ const { authenticate } = require('../middleware/auth');
 router.post('/superadmin/login', authController.superAdminLogin);
 router.post('/school/login', authController.schoolLogin);
 router.post('/student/login', authController.studentLogin);
+
+// Parent OTP routes (and aliases /send-otp, /verify-otp, /resend-otp)
 router.post('/parent/request-otp', authController.parentRequestOtp);
+router.post('/parent/resend-otp', authController.parentResendOtp);
 router.post('/parent/verify-otp', authController.parentVerifyOtp);
+router.post('/send-otp', authController.parentRequestOtp);
+router.post('/resend-otp', authController.parentResendOtp);
+router.post('/verify-otp', authController.parentVerifyOtp);
+
 
 // Password reset (public)
 router.post('/password-reset/request', authController.requestPasswordReset);

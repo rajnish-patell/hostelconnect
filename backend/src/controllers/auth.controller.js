@@ -3,7 +3,7 @@ const bcrypt = require('bcryptjs');
 const prisma = require('../utils/prisma');
 const { generateToken } = require('../utils/jwt');
 const { auditFromReq, logAudit, getClientIp } = require('../utils/audit');
-const { sendEmailOtp, verifyEmailOtp } = require('../utils/email');
+const { sendOtp, verifyOtp, resendOtp } = require('../utils/otpService');
 
 const isDemoMode = () => process.env.DEMO_MODE === 'true';
 
@@ -232,86 +232,160 @@ exports.studentLogin = async (req, res, next) => {
   }
 };
 
-// ─── Parent Login (Real Email OTP based) ───────────────────────────────────
+// ─── Parent Login (Real Resend Email & SMS OTP) ──────────────────────────────
 exports.parentRequestOtp = async (req, res, next) => {
   try {
-    const rawEmail = (req.body.email || req.body.mobile || '').trim().toLowerCase();
+    const rawInput = (req.body.email || req.body.mobile || req.body.destination || '').trim();
+    const reqChannel = (req.body.channel || (rawInput.includes('@') ? 'email' : 'sms')).toLowerCase();
 
-    if (!rawEmail || !rawEmail.includes('@')) {
-      return res.status(400).json({ success: false, message: 'Valid email address is required' });
+    if (!rawInput) {
+      return res.status(400).json({ success: false, message: 'Valid email address or 10-digit mobile number is required' });
     }
 
-    let parent = await prisma.parent.findFirst({
-      where: {
-        OR: [
-          { email: rawEmail },
-          { email: rawEmail.toLowerCase() },
-        ],
-      },
-    });
+    const isEmail = reqChannel === 'email' || rawInput.includes('@');
+    const cleanMobile = rawInput.replace(/\D/g, '');
 
+    // Look up registered parent account in Prisma database
+    let parent = null;
+    if (isEmail) {
+      parent = await prisma.parent.findFirst({
+        where: {
+          OR: [
+            { email: rawInput },
+            { email: rawInput.toLowerCase() },
+          ],
+        },
+      });
+    } else if (cleanMobile.length >= 10) {
+      parent = await prisma.parent.findFirst({
+        where: {
+          OR: [
+            { mobile: cleanMobile },
+            { mobile: cleanMobile.slice(-10) },
+          ],
+        },
+      });
+    }
+
+    // Auto-provision demo account for patelrajnish47@gmail.com
     if (!parent) {
-      if (rawEmail === 'patelrajnish47@gmail.com') {
+      if (rawInput.toLowerCase() === 'patelrajnish47@gmail.com') {
         parent = await prisma.parent.create({
           data: {
             email: 'patelrajnish47@gmail.com',
+            mobile: '9876543210',
             name: 'Rajnish Patel (Parent)',
             relation: 'Father',
           },
         });
       } else {
-        return res.status(404).json({ success: false, message: 'No parent account found with this email address. Please contact your school administrator.' });
+        // Return generic message to prevent account enumeration
+        return res.json({
+          success: true,
+          message: 'If this email or phone is registered, a verification code has been sent.',
+        });
       }
     }
 
-    // Real Email OTP sending via nodemailer & secure random OTP generator
-    const otpResult = await sendEmailOtp(parent.email);
+    if (!parent.isActive) {
+      return res.status(403).json({ success: false, message: 'Parent account is inactive. Please contact school administration.' });
+    }
 
-    logAudit({ userId: parent.id, userRole: 'parent', action: 'otp_requested', details: { email: parent.email }, ipAddress: getClientIp(req), userAgent: req.headers['user-agent'] });
+    const targetDestination = isEmail ? parent.email : (parent.mobile || parent.email);
+    const otpResult = await sendOtp({
+      destination: targetDestination,
+      parentId: parent.id,
+      parentName: parent.name || 'Parent',
+    });
 
-    const message = otpResult.emailSent
-      ? `Verification OTP sent to ${parent.email}. Please check your inbox.`
-      : `OTP generated for ${parent.email} (Testing OTP: ${otpResult.otpCode}). Set SMTP_HOST & SMTP_USER on Vercel for inbox delivery.`;
+    logAudit({ userId: parent.id, userRole: 'parent', action: 'otp_requested', details: { channel: otpResult.type }, ipAddress: getClientIp(req), userAgent: req.headers['user-agent'] });
+
+    const channelText = otpResult.type === 'email' ? 'email address' : 'mobile phone';
 
     res.json({
       success: true,
-      message,
-      data: {
-        email: parent.email,
-        expiresIn: otpResult.expiresInSeconds,
-        emailSent: otpResult.emailSent,
-        ...(!otpResult.emailSent ? { testOtp: otpResult.otpCode } : {}),
-      },
+      message: `Verification code sent to your registered ${channelText}.`,
     });
   } catch (error) {
+    if (error.statusCode === 429 || (error.message && (error.message.includes('Too many') || error.message.includes('Please wait')))) {
+      return res.status(429).json({ success: false, message: error.message });
+    }
+    next(error);
+  }
+};
+
+exports.parentResendOtp = async (req, res, next) => {
+  try {
+    const rawInput = (req.body.email || req.body.mobile || req.body.destination || '').trim();
+
+    if (!rawInput) {
+      return res.status(400).json({ success: false, message: 'Valid email address or mobile number is required' });
+    }
+
+    const isEmail = rawInput.includes('@');
+    const cleanMobile = rawInput.replace(/\D/g, '');
+
+    const parent = await prisma.parent.findFirst({
+      where: {
+        OR: [
+          { email: rawInput },
+          { email: rawInput.toLowerCase() },
+          ...(cleanMobile.length >= 10 ? [{ mobile: cleanMobile }, { mobile: cleanMobile.slice(-10) }] : []),
+        ],
+      },
+    });
+
+    if (!parent) {
+      return res.json({
+        success: true,
+        message: 'If this email or phone is registered, a verification code has been sent.',
+      });
+    }
+
+    const targetDestination = isEmail ? parent.email : (parent.mobile || parent.email);
+    const otpResult = await resendOtp({
+      destination: targetDestination,
+      parentId: parent.id,
+      parentName: parent.name || 'Parent',
+    });
+
+    res.json({
+      success: true,
+      message: `Verification code resent to your ${otpResult.type === 'email' ? 'email address' : 'mobile phone'}.`,
+    });
+  } catch (error) {
+    if (error.statusCode === 429 || (error.message && (error.message.includes('Too many') || error.message.includes('Please wait')))) {
+      return res.status(429).json({ success: false, message: error.message });
+    }
     next(error);
   }
 };
 
 exports.parentVerifyOtp = async (req, res, next) => {
   try {
-    const rawEmail = (req.body.email || req.body.mobile || '').trim().toLowerCase();
+    const rawInput = (req.body.email || req.body.mobile || req.body.destination || '').trim();
     const { otp } = req.body;
 
-    if (!rawEmail || !rawEmail.includes('@')) {
-      return res.status(400).json({ success: false, message: 'Valid email address required' });
+    if (!rawInput || !otp || typeof otp !== 'string' || otp.trim().length !== 6) {
+      return res.status(400).json({ success: false, message: 'Invalid or expired verification code.' });
     }
 
-    if (!otp || typeof otp !== 'string' || otp.length !== 6) {
-      return res.status(400).json({ success: false, message: 'Valid 6-digit OTP required' });
-    }
-
-    // Verify OTP against in-memory store with rate limiting & expiration check
-    const verification = verifyEmailOtp(rawEmail, otp);
+    // Verify OTP against Prisma database ParentOtp records
+    const verification = await verifyOtp({ destination: rawInput, inputOtp: otp.trim() });
     if (!verification.valid) {
-      return res.status(401).json({ success: false, message: verification.error || 'Invalid or expired OTP' });
+      const statusCode = verification.statusCode || 401;
+      return res.status(statusCode).json({ success: false, message: verification.error || 'Invalid or expired verification code.' });
     }
+
+    const isEmail = rawInput.includes('@');
+    const cleanMobile = rawInput.replace(/\D/g, '');
 
     const parent = await prisma.parent.findFirst({
       where: {
         OR: [
-          { email: rawEmail },
-          { email: rawEmail.toLowerCase() },
+          { email: rawInput },
+          { email: rawInput.toLowerCase() },
+          ...(cleanMobile.length >= 10 ? [{ mobile: cleanMobile }, { mobile: cleanMobile.slice(-10) }] : []),
         ],
       },
       include: {
@@ -327,13 +401,13 @@ exports.parentVerifyOtp = async (req, res, next) => {
       },
     });
 
-    if (!parent) {
-      return res.status(404).json({ success: false, message: 'Parent account not found' });
+    if (!parent || !parent.isActive) {
+      return res.status(401).json({ success: false, message: 'Invalid or expired verification code.' });
     }
 
     const token = generateToken({ id: parent.id, role: 'parent', email: parent.email });
 
-    logAudit({ userId: parent.id, userRole: 'parent', action: 'login', details: { email: parent.email }, ipAddress: getClientIp(req), userAgent: req.headers['user-agent'] });
+    logAudit({ userId: parent.id, userRole: 'parent', action: 'login', details: {}, ipAddress: getClientIp(req), userAgent: req.headers['user-agent'] });
 
     const studentData = (parent.students || []).map(sp => ({
       id: sp.student.id,
@@ -345,6 +419,8 @@ exports.parentVerifyOtp = async (req, res, next) => {
       isPrimary: sp.isPrimary,
     }));
 
+    const supabaseUserId = req.body.supabaseUserId || null;
+
     res.json({
       success: true,
       data: {
@@ -353,7 +429,9 @@ exports.parentVerifyOtp = async (req, res, next) => {
           id: parent.id,
           name: parent.name || 'Parent',
           email: parent.email,
+          mobile: parent.mobile,
           role: 'parent',
+          ...(supabaseUserId ? { supabaseUserId } : {}),
           students: studentData,
         },
       },
@@ -362,6 +440,8 @@ exports.parentVerifyOtp = async (req, res, next) => {
     next(error);
   }
 };
+
+
 
 // ─── GET /auth/me — Current user profile from token ─────────────────────────
 exports.getMe = async (req, res, next) => {

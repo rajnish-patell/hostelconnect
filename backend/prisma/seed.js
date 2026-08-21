@@ -216,7 +216,8 @@ async function seedDatabase(client = prisma) {
   console.log('Super Admin → email: patelrajnish47@gmail.com | password: SuperAdmin@123');
   console.log('School      → schoolCode: SCH001 | password: School@123');
   console.log('Student     → studentId: STU001 | password: Student@123');
-  console.log('Parent      → email: patelrajnish47@gmail.com (OTP: 123456)');
+  console.log('Parent      → email: patelrajnish47@gmail.com (Email / SMS OTP)');
+
 }
 
 if (require.main === module) {

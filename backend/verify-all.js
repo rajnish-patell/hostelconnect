@@ -1,6 +1,8 @@
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
+const prisma = require('./src/utils/prisma');
+const { hashOtp } = require('./src/utils/otpService');
 
 function request(options, data) {
   return new Promise((resolve, reject) => {
@@ -54,12 +56,12 @@ async function verifyAll() {
     console.log('❌ 1. Application Starts: FAIL - ' + err.message);
   }
 
-  // 2. Test Login (All roles)
+  // 2. Test Valid Login for SuperAdmin, School, Student, and Parent
   let superAdminToken = '';
+  let superAdminUser = null;
   let schoolToken = '';
   let studentToken = '';
   let parentToken = '';
-  let superAdminUser = null;
 
   try {
     const adminRes = await request(
@@ -74,9 +76,30 @@ async function verifyAll() {
       { hostname: 'localhost', port: 5000, path: '/api/auth/student/login', method: 'POST', headers: { 'Content-Type': 'application/json' } },
       { schoolCode: 'SCH001', studentId: 'STU001', password: 'Student@123' }
     );
+
+    // Setup active test OTP in database for parent login testing
+    let parent = await prisma.parent.findFirst({ where: { email: 'patelrajnish47@gmail.com' } });
+    if (!parent) {
+      parent = await prisma.parent.create({
+        data: { email: 'patelrajnish47@gmail.com', mobile: '9876543210', name: 'Rajnish Patel' }
+      });
+    }
+    const testOtpCode = '847291';
+    await prisma.parentOtp.deleteMany({ where: { destination: 'patelrajnish47@gmail.com' } });
+    await prisma.parentOtp.create({
+      data: {
+        parentId: parent.id,
+        channel: 'email',
+        destination: 'patelrajnish47@gmail.com',
+        otpHash: hashOtp(testOtpCode),
+        otpExpiresAt: new Date(Date.now() + 5 * 60 * 1000),
+        otpAttempts: 0,
+      },
+    });
+
     const parentRes = await request(
       { hostname: 'localhost', port: 5000, path: '/api/auth/parent/verify-otp', method: 'POST', headers: { 'Content-Type': 'application/json' } },
-      { mobile: '9876501234', otp: '123456' }
+      { email: 'patelrajnish47@gmail.com', otp: testOtpCode }
     );
 
     if (
@@ -111,7 +134,7 @@ async function verifyAll() {
     );
     const wrongOtp = await request(
       { hostname: 'localhost', port: 5000, path: '/api/auth/parent/verify-otp', method: 'POST', headers: { 'Content-Type': 'application/json' } },
-      { mobile: '9876501234', otp: '999999' }
+      { email: 'patelrajnish47@gmail.com', otp: '999999' }
     );
 
     if (wrongPass.status === 401 && wrongUser.status === 401 && wrongOtp.status === 401) {

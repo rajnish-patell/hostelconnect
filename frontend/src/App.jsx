@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import LandingPage from './pages/LandingPage';
 import Login from './pages/Login';
@@ -5,7 +6,8 @@ import SuperAdminDashboard from './pages/SuperAdminDashboard';
 import SchoolDashboard from './pages/SchoolDashboard';
 import StudentApp from './pages/StudentApp';
 import ParentApp from './pages/ParentApp';
-import { getUser } from './utils/auth';
+import { getUser, logout } from './utils/auth';
+import { onSupabaseAuthStateChange } from './utils/supabase';
 
 function PrivateRoute({ children, roles }) {
   const user = getUser();
@@ -17,7 +19,25 @@ function PrivateRoute({ children, roles }) {
 }
 
 export default function App() {
+  useEffect(() => {
+    const { data: authListener } = onSupabaseAuthStateChange((event, session) => {
+      if (event === 'SIGNED_OUT') {
+        const currentUser = getUser();
+        if (currentUser && currentUser.role === 'parent' && currentUser.supabaseUserId) {
+          logout();
+        }
+      }
+    });
+
+    return () => {
+      if (authListener?.subscription) {
+        authListener.subscription.unsubscribe();
+      }
+    };
+  }, []);
+
   return (
+
     <Routes>
       <Route path="/" element={<LandingPage />} />
       <Route path="/login" element={<Login />} />

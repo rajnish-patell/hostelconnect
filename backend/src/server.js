@@ -105,12 +105,17 @@ app.post('/api/contact', (req, res) => {
 });
 
 // ─── API Routes ─────────────────────────────────────────────────────────────
+const authController = require('./controllers/auth.controller');
+app.post('/api/send-otp', authLimiter, authController.parentRequestOtp);
+app.post('/api/verify-otp', authLimiter, authController.parentVerifyOtp);
+
 app.use('/api/auth', authRoutes);
 app.use('/api/schools', schoolRoutes);
 app.use('/api/students', studentRoutes);
 app.use('/api/calls', callRoutes);
 app.use('/api/recharge', rechargeRoutes);
 app.use('/api/admin', adminRoutes);
+
 
 // ─── Frontend SPA static files & fallback ───────────────────────────────────
 const frontendDist = path.resolve(__dirname, '../../frontend/dist');

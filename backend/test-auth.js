@@ -1,6 +1,9 @@
 const http = require('http');
+const prisma = require('./src/utils/prisma');
+const { hashOtp } = require('./src/utils/otpService');
 
 function request(options, data) {
+
   return new Promise((resolve, reject) => {
     const req = http.request(options, (res) => {
       let body = '';
@@ -152,7 +155,7 @@ async function runTests() {
     failed++;
   }
 
-  // 6. Parent OTP Request & Verification
+  // 6. Parent OTP Request, Invalid Code Rejection & Verification
   let parentToken = '';
   try {
     const otpReq = await request(
@@ -163,8 +166,42 @@ async function runTests() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
       },
-      { mobile: '9876501234' }
+      { email: 'patelrajnish47@gmail.com' }
     );
+
+    // Verify response body does NOT expose OTP or sensitive fields
+    const isResponseClean = !otpReq.data?.otp && !otpReq.data?.previewUrl && !otpReq.data?.data?.previewUrl;
+
+    const invalidVer = await request(
+      {
+        hostname: 'localhost',
+        port: 5000,
+        path: '/api/auth/parent/verify-otp',
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      },
+      { email: 'patelrajnish47@gmail.com', otp: '000000' }
+    );
+
+    // Setup active test OTP hash in database for parent verification test
+    let parent = await prisma.parent.findFirst({ where: { email: 'patelrajnish47@gmail.com' } });
+    if (!parent) {
+      parent = await prisma.parent.create({
+        data: { email: 'patelrajnish47@gmail.com', mobile: '9876543210', name: 'Rajnish Patel' }
+      });
+    }
+    const testOtpCode = '739102';
+    await prisma.parentOtp.deleteMany({ where: { destination: 'patelrajnish47@gmail.com' } });
+    await prisma.parentOtp.create({
+      data: {
+        parentId: parent.id,
+        channel: 'email',
+        destination: 'patelrajnish47@gmail.com',
+        otpHash: hashOtp(testOtpCode),
+        otpExpiresAt: new Date(Date.now() + 5 * 60 * 1000),
+        otpAttempts: 0,
+      },
+    });
 
     const otpVer = await request(
       {
@@ -174,21 +211,22 @@ async function runTests() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
       },
-      { mobile: '9876501234', otp: '123456' }
+      { email: 'patelrajnish47@gmail.com', otp: testOtpCode }
     );
 
-    if (otpVer.status === 200 && otpVer.data.data?.token) {
+    if (otpReq.status === 200 && isResponseClean && (invalidVer.status === 400 || invalidVer.status === 401) && otpVer.status === 200 && otpVer.data.data?.token) {
       parentToken = otpVer.data.data.token;
-      console.log('✅ PASS: Parent OTP flow & login');
+      console.log('✅ PASS: Parent OTP flow (Request Zero-Exposure, Invalid Code Rejection, & Login)');
       passed++;
     } else {
-      console.error('❌ FAIL: Parent OTP flow', otpVer);
+      console.error('❌ FAIL: Parent OTP flow', { otpReq, isResponseClean, invalidVer, otpVer });
       failed++;
     }
   } catch (err) {
     console.error('❌ FAIL: Parent OTP exception', err.message);
     failed++;
   }
+
 
   // 7. Protected Route Enforcement Without Token
   try {

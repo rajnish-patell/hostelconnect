@@ -67,7 +67,8 @@ Frontend runs at → **http://localhost:3000**
 |--------------|--------------------------------|--------------------|
 | Super Admin  | admin@hostelvideocall.com      | SuperAdmin@123     |
 | School       | SCH001                         | School@123         |
-| Parent       | 9876501234                     | OTP: 123456        |
+| Parent       | 9876501234 / patelrajnish47@gmail.com | Email / SMS OTP    |
+
 | Student      | STU001 (schoolCode SCH001)     | Student@123        |
 
 ---
