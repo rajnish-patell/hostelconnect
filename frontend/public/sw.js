@@ -1,5 +1,5 @@
 // Hostel Video Call Service Worker
-const CACHE_NAME = 'hostel-video-call-v1';
+const CACHE_NAME = 'hostel-video-call-v2';
 const ASSETS_TO_CACHE = [
   '/',
   '/index.html',
@@ -7,6 +7,7 @@ const ASSETS_TO_CACHE = [
   '/icon-192.svg',
   '/icon-512.svg'
 ];
+
 
 // Install Event
 self.addEventListener('install', (event) => {
