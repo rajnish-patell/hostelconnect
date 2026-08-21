@@ -18,23 +18,25 @@ export function setAuth(token, user) {
   }
 }
 
-export function logout() {
+export function clearAuth() {
+  localStorage.removeItem('token');
+  localStorage.removeItem('user');
+  sessionStorage.clear();
+}
+
+export async function logout() {
   try {
-    signOutSupabase();
-    localStorage.removeItem('token');
-    localStorage.removeItem('user');
-    sessionStorage.clear();
+    await signOutSupabase();
   } catch (e) {
-    console.error('Logout error:', e);
+    // ignore signout errors and still clear local state
   }
 
+  clearAuth();
 
-  // Ensure scroll lock and pointer events are always restored
   if (typeof document !== 'undefined') {
     document.body.style.overflow = 'unset';
     document.body.style.pointerEvents = 'auto';
   }
 
-  // Use replace to prevent back-navigation to protected screens
   window.location.replace('/login');
 }

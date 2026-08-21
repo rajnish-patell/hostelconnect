@@ -81,16 +81,17 @@ model Student {
 }
 
 model Parent {
-  id           Int      @id @default(autoincrement())
-  email        String   @unique
-  mobile       String?
-  name         String?
-  relation     String   @default("Guardian") // Father / Mother / Guardian
-  passwordHash String?  @map("password_hash")
-  fcmToken     String?  @map("fcm_token")
-  isActive     Boolean  @default(true) @map("is_active")
-  createdAt    DateTime @default(now()) @map("created_at")
-  updatedAt    DateTime @updatedAt @map("updated_at")
+  id             Int      @id @default(autoincrement())
+  email          String   @unique
+  supabaseUserId String?  @unique @map("supabase_user_id")
+  mobile         String?
+  name           String?
+  relation       String   @default("Guardian") // Father / Mother / Guardian
+  passwordHash   String?  @map("password_hash")
+  fcmToken       String?  @map("fcm_token")
+  isActive       Boolean  @default(true) @map("is_active")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
 
   students StudentParent[]
   calls    CallSession[]

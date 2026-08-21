@@ -419,7 +419,14 @@ exports.parentVerifyOtp = async (req, res, next) => {
       isPrimary: sp.isPrimary,
     }));
 
-    const supabaseUserId = req.body.supabaseUserId || null;
+    const supabaseUserId = req.body.supabaseUserId || parent.supabaseUserId || null;
+
+    if (supabaseUserId && parent.supabaseUserId !== supabaseUserId) {
+      await prisma.parent.update({
+        where: { id: parent.id },
+        data: { supabaseUserId },
+      });
+    }
 
     res.json({
       success: true,
@@ -431,7 +438,7 @@ exports.parentVerifyOtp = async (req, res, next) => {
           email: parent.email,
           mobile: parent.mobile,
           role: 'parent',
-          ...(supabaseUserId ? { supabaseUserId } : {}),
+          supabaseUserId,
           students: studentData,
         },
       },
@@ -479,8 +486,10 @@ exports.getMe = async (req, res, next) => {
         user = {
           id: parent.id,
           name: parent.name,
+          email: parent.email,
           mobile: parent.mobile,
           role: 'parent',
+          ...(parent.supabaseUserId ? { supabaseUserId: parent.supabaseUserId } : {}),
           students: (parent.students || []).map(sp => ({
             id: sp.student.id,
             name: sp.student.name,

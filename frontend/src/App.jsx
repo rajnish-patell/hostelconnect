@@ -6,25 +6,53 @@ import SuperAdminDashboard from './pages/SuperAdminDashboard';
 import SchoolDashboard from './pages/SchoolDashboard';
 import StudentApp from './pages/StudentApp';
 import ParentApp from './pages/ParentApp';
-import { getUser, logout } from './utils/auth';
-import { onSupabaseAuthStateChange } from './utils/supabase';
+import { getUser, logout, setAuth } from './utils/auth';
+import { getSupabaseSession, onSupabaseAuthStateChange } from './utils/supabase';
+
+function resolveDashboardRoute(user) {
+  if (!user) return '/login';
+  if (user.role === 'superadmin') return '/superadmin';
+  if (user.role === 'school') return '/school';
+  if (user.role === 'student') return '/student';
+  if (user.role === 'parent') return '/parent';
+  return '/login';
+}
 
 function PrivateRoute({ children, roles }) {
   const user = getUser();
   if (!user) return <Navigate to="/login" replace />;
   if (roles && !roles.includes(user.role)) {
-    return <Navigate to="/login" replace />;
+    return <Navigate to={resolveDashboardRoute(user)} replace />;
   }
   return children;
 }
 
 export default function App() {
   useEffect(() => {
+    const syncSession = async () => {
+      const { data } = await getSupabaseSession();
+      const sessionUser = data?.session?.user;
+      const currentUser = getUser();
+
+      if (sessionUser && currentUser && currentUser.role === 'parent' && !currentUser.supabaseUserId) {
+        setAuth(localStorage.getItem('token'), { ...currentUser, supabaseUserId: sessionUser.id });
+      }
+    };
+
+    syncSession();
+
     const { data: authListener } = onSupabaseAuthStateChange((event, session) => {
+      const currentUser = getUser();
       if (event === 'SIGNED_OUT') {
-        const currentUser = getUser();
         if (currentUser && currentUser.role === 'parent' && currentUser.supabaseUserId) {
           logout();
+        }
+      }
+
+      if ((event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') && session?.user && currentUser?.role === 'parent') {
+        const nextUser = { ...currentUser, supabaseUserId: session.user.id };
+        if (!currentUser.supabaseUserId || currentUser.supabaseUserId !== session.user.id) {
+          setAuth(localStorage.getItem('token'), nextUser);
         }
       }
     });
@@ -40,7 +68,15 @@ export default function App() {
 
     <Routes>
       <Route path="/" element={<LandingPage />} />
-      <Route path="/login" element={<Login />} />
+      <Route
+        path="/login"
+        element={
+          (() => {
+            const currentUser = getUser();
+            return currentUser ? <Navigate to={resolveDashboardRoute(currentUser)} replace /> : <Login />;
+          })()
+        }
+      />
       
       <Route
         path="/superadmin/*"
