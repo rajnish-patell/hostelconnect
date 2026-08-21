@@ -1,5 +1,7 @@
 // Hostel Video Call Service Worker
-const CACHE_NAME = 'hostel-video-call-v2';
+const CACHE_NAME = 'hostel-video-call-v3';
+
+
 const ASSETS_TO_CACHE = [
   '/',
   '/index.html',
