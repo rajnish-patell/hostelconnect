@@ -24,8 +24,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import StatusBadge from "@/components/common/StatusBadge";
-import LoadingState from "@/components/common/LoadingState";
-import { formatDuration } from "@/lib/utils";
+import { formatDuration, formatTimeSafe, formatDateSafe } from "@/lib/utils";
 
 /* ─── Minimals Stat Card ─── */
 function StatCard({ icon: Icon, iconBg, iconColor, label, value, trend, trendLabel, trendUp }) {
@@ -385,8 +384,8 @@ export default function AdminDashboardPage() {
                     <td className="px-6 py-4 text-sm font-mono font-medium text-[#1C252E] dark:text-white">
                       {formatDuration(call.duration_seconds)}
                     </td>
-                    <td className="px-6 py-4 text-sm text-[#919EAB]">
-                      {new Date(call.created_at).toLocaleTimeString("en-IN", { timeStyle: "short" })}
+                    <td className="px-6 py-4 text-sm text-[#919EAB]" suppressHydrationWarning>
+                      {formatTimeSafe(call.created_at)}
                     </td>
                     <td className="px-6 py-4 text-right">
                       <Link href={`/call/${call.id}`}>

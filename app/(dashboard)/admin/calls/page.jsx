@@ -7,8 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
 import StatusBadge from "@/components/common/StatusBadge";
-import LoadingState from "@/components/common/LoadingState";
-import { formatDuration } from "@/lib/utils";
+import { formatDuration, formatDateSafe, formatTimeSafe } from "@/lib/utils";
 
 export default function AdminCallsPage() {
   const [calls, setCalls] = useState([]);
@@ -137,11 +136,8 @@ export default function AdminCallsPage() {
                     <td className="px-5 py-4 font-mono text-[11px] text-slate-400">
                       {call.meeting_id}
                     </td>
-                    <td className="px-5 py-4 text-slate-500">
-                      {new Date(call.created_at).toLocaleString("en-IN", {
-                        dateStyle: "short",
-                        timeStyle: "short",
-                      })}
+                    <td className="px-5 py-4 text-slate-500" suppressHydrationWarning>
+                      {formatDateSafe(call.created_at)} • {formatTimeSafe(call.created_at)}
                     </td>
                     <td className="px-5 py-4 text-right">
                       {call.status === "READY" || call.status === "IN_PROGRESS" ? (

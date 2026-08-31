@@ -10,6 +10,7 @@ import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import LoadingState from "@/components/common/LoadingState";
 import EmptyState from "@/components/common/EmptyState";
+import { formatTimeSafe } from "@/lib/utils";
 
 export default function AdminDevicesPage() {
   const [devices, setDevices] = useState([]);
@@ -181,7 +182,7 @@ export default function AdminDevicesPage() {
                     {device.last_seen_at && (
                       <div className="flex items-center justify-between">
                         <span>Last Active:</span>
-                        <span>{new Date(device.last_seen_at).toLocaleTimeString("en-IN")}</span>
+                        <span suppressHydrationWarning>{formatTimeSafe(device.last_seen_at)}</span>
                       </div>
                     )}
                   </div>
