@@ -72,7 +72,7 @@ export async function GET(request) {
     return NextResponse.json({
       success: true,
       device: {
-        id: "campus-kiosk-main",
+        id: null,
         name: "Campus Calling Kiosk 1",
         hostelId: students?.[0]?.hostel_id || null,
       },
