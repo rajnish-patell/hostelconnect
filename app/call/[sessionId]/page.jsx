@@ -9,7 +9,7 @@ import JitsiMeetingWrapper from "@/components/video/JitsiMeeting";
 export default function CallSessionPage() {
   const params = useParams();
   const router = useRouter();
-  const sessionId = params.sessionId;
+  const sessionId = params?.sessionId;
 
   const [session, setSession] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -17,6 +17,7 @@ export default function CallSessionPage() {
 
   useEffect(() => {
     async function fetchSession() {
+      if (!sessionId) return;
       try {
         const res = await fetch(`/api/calls/${sessionId}`);
         let json = null;
@@ -24,53 +25,57 @@ export default function CallSessionPage() {
           json = await res.json();
         }
 
-        if (!res.ok || !json?.success) {
+        if (!res.ok || !json?.success || !json?.data) {
           throw new Error(json?.error?.message || "Failed to load call session");
         }
 
         setSession(json.data);
       } catch (err) {
-        setErrorMsg(err.message);
+        setErrorMsg(err.message || "Could not connect to call room");
       } finally {
         setLoading(false);
       }
     }
 
-    if (sessionId) fetchSession();
+    fetchSession();
   }, [sessionId]);
 
   if (loading) {
     return (
-      <div className="h-screen w-screen bg-[#0B0F15] text-white flex flex-col items-center justify-center space-y-4">
+      <div className="h-screen w-screen bg-[#202124] text-white flex flex-col items-center justify-center space-y-4">
         <div className="w-16 h-16 rounded-full bg-[#00A76F]/20 border border-[#00A76F]/30 flex items-center justify-center animate-pulse">
           <Loader2 className="w-8 h-8 text-[#00A76F] animate-spin" />
         </div>
         <p className="text-base font-extrabold text-white tracking-tight">Connecting Encrypted Video Room...</p>
-        <p className="text-xs text-[#919EAB]">Establishing high-definition peer stream</p>
+        <p className="text-xs text-[#9aa0a6]">Zero external login required</p>
       </div>
     );
   }
 
   if (errorMsg || !session) {
     return (
-      <div className="h-screen w-screen bg-[#0B0F15] text-white flex flex-col items-center justify-center p-6 text-center">
+      <div className="h-screen w-screen bg-[#202124] text-white flex flex-col items-center justify-center p-6 text-center">
         <div className="p-5 rounded-3xl bg-red-500/15 text-red-400 mb-4 border border-red-500/25">
           <AlertCircle className="w-10 h-10" />
         </div>
-        <h2 className="text-xl font-bold">Call Session Ended or Invalid</h2>
-        <p className="text-xs text-slate-400 max-w-md mt-1 mb-6">{errorMsg || "This video calling session is no longer active."}</p>
+        <h2 className="text-xl font-bold">Call Session Ended or Unavailable</h2>
+        <p className="text-xs text-[#9aa0a6] max-w-md mt-1 mb-6">{errorMsg || "This video calling session is no longer active."}</p>
         <Button onClick={() => router.push("/parent")} className="bg-[#00A76F] hover:bg-[#007856] rounded-xl font-bold text-xs h-11 px-6">
-          <ArrowLeft className="w-4 h-4 mr-2" /> Return to Parent Dashboard
+          <ArrowLeft className="w-4 h-4 mr-2" /> Return to Dashboard
         </Button>
       </div>
     );
   }
 
-  const studentName = `${session.student.first_name} ${session.student.last_name || ""}`.trim();
-  const parentName = `${session.parent.first_name} ${session.parent.last_name || ""}`.trim();
+  const studentName = session?.student
+    ? `${session.student.first_name || ""} ${session.student.last_name || ""}`.trim()
+    : "Student";
+  const parentName = session?.parent
+    ? `${session.parent.first_name || ""} ${session.parent.last_name || ""}`.trim()
+    : "Parent";
 
   return (
-    <div className="h-screen w-screen bg-[#0B0F15] text-white overflow-hidden p-2 sm:p-4">
+    <div className="h-screen w-screen bg-[#202124] text-white overflow-hidden p-0 sm:p-2">
       <JitsiMeetingWrapper
         sessionId={session.id}
         meetingId={session.meeting_id}
