@@ -2,8 +2,9 @@
 
 import React, { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
-import { PhoneCall, Video, X, Volume2, ShieldCheck, User } from "lucide-react";
+import { PhoneCall, Video, X, Volume2, ShieldCheck, User, CheckCircle2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { createClient } from "@/lib/supabase/client";
 
 export default function IncomingCallNotification({ user, profile }) {
   const router = useRouter();
@@ -11,8 +12,9 @@ export default function IncomingCallNotification({ user, profile }) {
   const [dismissedCallId, setDismissedCallId] = useState(null);
   const audioContextRef = useRef(null);
   const ringIntervalRef = useRef(null);
+  const supabase = createClient();
 
-  // Play browser-synthesized telephone ring chime
+  // Play synthetic telephone ring chime
   const playRingChime = () => {
     try {
       const AudioContext = window.AudioContext || window.webkitAudioContext;
@@ -31,10 +33,10 @@ export default function IncomingCallNotification({ user, profile }) {
 
       osc1.type = "sine";
       osc2.type = "sine";
-      osc1.frequency.setValueAtTime(440, ctx.currentTime); // A4
-      osc2.frequency.setValueAtTime(480, ctx.currentTime); // B4
+      osc1.frequency.setValueAtTime(440, ctx.currentTime);
+      osc2.frequency.setValueAtTime(480, ctx.currentTime);
 
-      gain.gain.setValueAtTime(0.05, ctx.currentTime);
+      gain.gain.setValueAtTime(0.08, ctx.currentTime);
       gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.8);
 
       osc1.connect(gain);
@@ -46,11 +48,11 @@ export default function IncomingCallNotification({ user, profile }) {
       osc1.stop(ctx.currentTime + 0.8);
       osc2.stop(ctx.currentTime + 0.8);
     } catch {
-      // Audio playback restricted by user gesture
+      // Audio playback restricted by user interaction policy
     }
   };
 
-  // Poll for ready incoming calls
+  // Poll & Supabase Realtime Listener for incoming calls
   useEffect(() => {
     let isMounted = true;
 
@@ -62,12 +64,12 @@ export default function IncomingCallNotification({ user, profile }) {
         if (!isMounted) return;
 
         if (json.success && Array.isArray(json.data)) {
-          // Find any call that is READY or IN_PROGRESS and created in the last 5 minutes
-          const fiveMinsAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+          // Find any call that is READY or IN_PROGRESS and created in the last 10 minutes
+          const tenMinsAgo = new Date(Date.now() - 10 * 60 * 1000).toISOString();
           const activeCall = json.data.find(
             (c) =>
               (c.status === "READY" || c.status === "IN_PROGRESS") &&
-              c.created_at >= fiveMinsAgo &&
+              c.created_at >= tenMinsAgo &&
               c.id !== dismissedCallId
           );
 
@@ -83,20 +85,29 @@ export default function IncomingCallNotification({ user, profile }) {
       }
     }
 
-    // Check immediately and every 3.5 seconds
+    // Check immediately and every 2 seconds
     checkIncomingCalls();
-    const interval = setInterval(checkIncomingCalls, 3500);
+    const interval = setInterval(checkIncomingCalls, 2000);
+
+    // Also listen to Supabase Realtime broadcast channel
+    const channel = supabase.channel("hct_global_incoming_calls");
+    channel
+      .on("broadcast", { event: "new_call" }, () => {
+        checkIncomingCalls();
+      })
+      .subscribe();
 
     return () => {
       isMounted = false;
       clearInterval(interval);
+      supabase.removeChannel(channel);
     };
   }, [dismissedCallId, incomingCall]);
 
   // Repeated chime while incoming call modal is active
   useEffect(() => {
     if (incomingCall) {
-      ringIntervalRef.current = setInterval(playRingChime, 3000);
+      ringIntervalRef.current = setInterval(playRingChime, 2500);
     } else {
       if (ringIntervalRef.current) clearInterval(ringIntervalRef.current);
     }
@@ -124,55 +135,57 @@ export default function IncomingCallNotification({ user, profile }) {
   };
 
   return (
-    <div className="fixed top-6 right-6 z-50 max-w-md w-full animate-in slide-in-from-top-6 duration-300">
-      <div className="bg-[#141A21] text-white p-5 rounded-3xl border-2 border-[#00A76F] shadow-2xl shadow-[#00A76F]/30 space-y-4">
-        <div className="flex items-start justify-between">
-          <div className="flex items-center gap-3">
-            <div className="relative">
-              <div className="w-12 h-12 rounded-full bg-[#00A76F] text-white flex items-center justify-center font-extrabold text-xl shadow-lg shadow-[#00A76F]/40 animate-pulse">
-                {studentName.charAt(0)}
-              </div>
-              <span className="absolute -bottom-1 -right-1 w-5 h-5 rounded-full bg-emerald-500 border-2 border-[#141A21] flex items-center justify-center">
-                <PhoneCall className="w-2.5 h-2.5 text-white animate-bounce" />
-              </span>
-            </div>
+    <div className="fixed inset-0 z-50 bg-[#1C252E]/70 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in duration-300">
+      <div className="relative w-full max-w-sm sm:max-w-md bg-white dark:bg-[#212B36] rounded-3xl border border-[#00A76F]/40 shadow-2xl p-6 sm:p-8 text-center space-y-6 animate-in zoom-in-95 duration-200">
+        {/* Dismiss 'X' Button */}
+        <button
+          type="button"
+          onClick={handleDismiss}
+          className="absolute top-4 right-4 p-2 rounded-full text-[#919EAB] hover:text-[#1C252E] dark:hover:text-white hover:bg-[#F4F6F8] dark:hover:bg-[#1C252E] transition-colors cursor-pointer"
+          title="Decline"
+        >
+          <X className="w-5 h-5" />
+        </button>
 
-            <div>
-              <div className="flex items-center gap-2">
-                <span className="text-[10px] font-extrabold uppercase px-2 py-0.5 rounded-full bg-[#00A76F]/20 text-[#5BE49B] border border-[#00A76F]/30">
-                  Incoming Live Call
-                </span>
-                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
-              </div>
-              <h4 className="font-extrabold text-base text-white mt-0.5">{studentName}</h4>
-              <p className="text-xs text-[#919EAB]">{hostelName} • Video Terminal</p>
-            </div>
+        {/* Pulsing Green Call Icon */}
+        <div className="relative mx-auto w-24 h-24 sm:w-28 sm:h-28 flex items-center justify-center">
+          <div className="absolute inset-0 rounded-full bg-[#00A76F]/20 animate-ping duration-1000" />
+          <div className="absolute -inset-2 rounded-full bg-[#00A76F]/10 animate-pulse" />
+          <div className="relative w-20 h-20 sm:w-24 sm:h-24 rounded-full bg-gradient-to-br from-[#00A76F] via-[#007856] to-[#004B34] text-white flex items-center justify-center shadow-xl shadow-[#00A76F]/40 ring-4 ring-white dark:ring-[#212B36]">
+            <PhoneCall className="w-9 h-9 sm:w-11 sm:h-11 animate-bounce" />
           </div>
-
-          <button
-            type="button"
-            onClick={handleDismiss}
-            className="p-1.5 rounded-full text-[#919EAB] hover:text-white hover:bg-white/10 transition-colors"
-          >
-            <X className="w-4 h-4" />
-          </button>
         </div>
 
-        <div className="flex items-center gap-2 pt-1">
+        {/* Caller Info */}
+        <div className="space-y-1.5">
+          <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#EAFBF1] dark:bg-[#00A76F]/20 text-[#007856] dark:text-[#5BE49B] text-xs font-extrabold uppercase tracking-wider">
+            <Video className="w-3.5 h-3.5" /> Incoming Video Call
+          </span>
+          <h3 className="text-xl sm:text-2xl font-extrabold text-[#1C252E] dark:text-white">
+            {studentName} is calling you!
+          </h3>
+          <p className="text-xs text-[#919EAB]">
+            From <span className="font-bold text-[#1C252E] dark:text-white">{hostelName}</span> terminal
+          </p>
+        </div>
+
+        {/* Action Buttons */}
+        <div className="grid grid-cols-2 gap-3 pt-2">
           <Button
-            onClick={handleAccept}
-            className="flex-1 h-12 bg-[#00A76F] hover:bg-[#007856] text-white font-extrabold text-xs rounded-xl shadow-lg shadow-[#00A76F]/30 flex items-center justify-center gap-2 cursor-pointer transition-all active:scale-95"
+            type="button"
+            onClick={handleDismiss}
+            variant="outline"
+            className="h-12 rounded-2xl border-red-200 dark:border-red-900/50 text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30 font-bold text-xs cursor-pointer"
           >
-            <Video className="w-4 h-4" />
-            <span>Accept Video Call</span>
+            Decline
           </Button>
 
           <Button
-            onClick={handleDismiss}
-            variant="outline"
-            className="h-12 px-4 rounded-xl border-[#2E3844] bg-white/5 hover:bg-red-500/20 text-red-400 hover:text-red-300 font-bold text-xs cursor-pointer"
+            type="button"
+            onClick={handleAccept}
+            className="h-12 rounded-2xl bg-[#00A76F] hover:bg-[#007856] text-white font-extrabold text-xs sm:text-sm shadow-lg shadow-[#00A76F]/30 gap-2 cursor-pointer transition-all active:scale-95 animate-pulse"
           >
-            Decline
+            <Video className="w-4 h-4" /> Accept Call
           </Button>
         </div>
       </div>

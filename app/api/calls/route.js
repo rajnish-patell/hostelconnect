@@ -1,8 +1,7 @@
 import { NextResponse } from "next/server";
-import { getCurrentUser, getUserProfile, verifyDeviceSession } from "@/lib/auth/rbac";
+import { getCurrentUser, getUserProfile } from "@/lib/auth/rbac";
 import { createCallSession } from "@/lib/services/call.service";
 import { initiateCallSchema } from "@/lib/validators";
-import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 export async function GET(request) {
@@ -13,30 +12,73 @@ export async function GET(request) {
     }
 
     const profile = await getUserProfile(user.id);
-    const supabase = await createClient();
+    const admin = createAdminClient();
     const { searchParams } = new URL(request.url);
 
     const page = parseInt(searchParams.get("page") || "1", 10);
     const limit = parseInt(searchParams.get("limit") || "20", 10);
     const offset = (page - 1) * limit;
 
-    let query = supabase
+    let query = admin
       .from("call_sessions")
       .select("*, student:students(id, first_name, last_name, admission_number), parent:parents(id, first_name, last_name, phone), hostel:hostels(id, name)", { count: "exact" })
       .order("created_at", { ascending: false })
       .range(offset, offset + limit - 1);
 
     if (profile?.role === "PARENT") {
-      const { data: parent } = await supabase
+      // Find parent records by user_id OR phone
+      const { data: parentRecords } = await admin
         .from("parents")
-        .select("id")
-        .eq("user_id", user.id)
-        .single();
+        .select("id, phone")
+        .eq("user_id", user.id);
 
-      if (parent) {
-        query = query.eq("parent_id", parent.id);
+      const userPhone = profile?.phone || parentRecords?.[0]?.phone || user?.user_metadata?.phone;
+
+      let parentIds = (parentRecords || []).map((p) => p.id);
+      if (userPhone) {
+        const cleanPhone = userPhone.replace(/\D/g, "");
+        const { data: samePhoneParents } = await admin
+          .from("parents")
+          .select("id")
+          .eq("phone", cleanPhone);
+
+        if (samePhoneParents) {
+          parentIds = [...new Set([...parentIds, ...samePhoneParents.map((p) => p.id)])];
+        }
+      }
+
+      // Also find all students linked to this parent
+      let studentIds = [];
+      if (parentIds.length > 0) {
+        const { data: guardians } = await admin
+          .from("student_guardians")
+          .select("student_id")
+          .in("parent_id", parentIds);
+
+        studentIds = (guardians || []).map((g) => g.student_id);
+      }
+
+      if (parentIds.length > 0 || studentIds.length > 0) {
+        let orConditions = [];
+        if (parentIds.length > 0) orConditions.push(`parent_id.in.(${parentIds.join(",")})`);
+        if (studentIds.length > 0) orConditions.push(`student_id.in.(${studentIds.join(",")})`);
+
+        query = query.or(orConditions.join(","));
       } else {
         return NextResponse.json({ success: true, data: [], pagination: { total: 0, page, limit } });
+      }
+    } else if (profile?.role === "HOSTEL_ADMIN" || profile?.role === "WARDEN") {
+      // Find hostel of this admin
+      const { data: member } = await admin
+        .from("hostel_members")
+        .select("hostel_id")
+        .eq("user_id", user.id)
+        .eq("is_active", true)
+        .limit(1)
+        .single();
+
+      if (member?.hostel_id) {
+        query = query.eq("hostel_id", member.hostel_id);
       }
     }
 
@@ -48,7 +90,7 @@ export async function GET(request) {
 
     return NextResponse.json({
       success: true,
-      data,
+      data: data || [],
       pagination: {
         total: count || 0,
         page,
@@ -76,15 +118,12 @@ export async function POST(request) {
     let { studentId, parentId, deviceId, isEmergency, notes } = parseResult.data;
     const admin = createAdminClient();
 
-    // Check auth: Can be initiated by authenticated user OR kiosk
     let initiatedByUserId = null;
     const user = await getCurrentUser();
-
     if (user) {
       initiatedByUserId = user.id;
     }
 
-    // Auto-resolve parentId if missing or invalid UUID
     const isUuid = (val) => typeof val === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val);
 
     if (!isUuid(parentId)) {
@@ -98,32 +137,31 @@ export async function POST(request) {
       }
 
       if (!isUuid(parentId)) {
-        const { data: guardians } = await admin
+        const { data: guardian } = await admin
           .from("student_guardians")
           .select("parent_id")
           .eq("student_id", studentId)
-          .limit(1);
-        if (guardians && guardians.length > 0) {
-          parentId = guardians[0].parent_id;
-        }
+          .eq("can_video_call", true)
+          .limit(1)
+          .single();
+        if (guardian?.parent_id) parentId = guardian.parent_id;
       }
     }
 
-    // Sanitize deviceId for PostgreSQL UUID constraint
-    const sanitizedDeviceId = isUuid(deviceId) ? deviceId : null;
-
-    const ipAddress = request.headers.get("x-forwarded-for") || "127.0.0.1";
-    const userAgent = request.headers.get("user-agent") || "";
+    if (!parentId) {
+      return NextResponse.json({
+        success: false,
+        error: { code: "NO_PARENT", message: "No registered parent found for this student." },
+      }, { status: 400 });
+    }
 
     const session = await createCallSession({
       studentId,
       parentId,
-      deviceId: sanitizedDeviceId,
+      deviceId: deviceId || null,
+      isEmergency: Boolean(isEmergency),
+      notes: notes || null,
       initiatedByUserId,
-      isEmergency,
-      notes,
-      ipAddress,
-      userAgent,
     });
 
     return NextResponse.json({
@@ -134,7 +172,7 @@ export async function POST(request) {
     console.error("[Create Call Error]:", err);
     return NextResponse.json({
       success: false,
-      error: { code: err.code || "CALL_INITIATION_FAILED", message: err.message },
+      error: { code: err.code || "CALL_CREATION_FAILED", message: err.message },
     }, { status: err.status || 500 });
   }
 }
