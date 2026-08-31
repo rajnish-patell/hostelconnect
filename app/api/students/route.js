@@ -206,35 +206,82 @@ export async function POST(request) {
         }
       }
 
-      // Upsert Parents Profile
-      const { data: parentRecord } = await admin
+      // Create or update Parent Profile
+      let { data: parentRecord } = await admin
         .from("parents")
-        .upsert({
-          user_id: authUserId,
-          first_name: parentName ? parentName.split(" ")[0] : `${firstName}'s`,
-          last_name: parentName && parentName.split(" ").length > 1 ? parentName.split(" ").slice(1).join(" ") : "Parent",
-          phone: cleanPhone,
-          email: generatedEmail,
-          is_active: true,
-          metadata: {
-            initial_password: plainPassword,
-          },
-        }, { onConflict: "phone" })
-        .select()
+        .select("*")
+        .eq("phone", cleanPhone)
+        .order("created_at", { ascending: false })
+        .limit(1)
         .single();
 
-      // Link Parent to Student
       if (parentRecord) {
-        await admin
+        const { data: updatedP } = await admin
+          .from("parents")
+          .update({
+            user_id: authUserId || parentRecord.user_id,
+            first_name: parentName ? parentName.split(" ")[0] : parentRecord.first_name,
+            last_name: parentName && parentName.split(" ").length > 1 ? parentName.split(" ").slice(1).join(" ") : parentRecord.last_name,
+            is_active: true,
+            metadata: {
+              ...(parentRecord.metadata || {}),
+              initial_password: plainPassword,
+            },
+          })
+          .eq("id", parentRecord.id)
+          .select()
+          .single();
+        parentRecord = updatedP || parentRecord;
+      } else {
+        const { data: newP } = await admin
+          .from("parents")
+          .insert({
+            user_id: authUserId,
+            first_name: parentName ? parentName.split(" ")[0] : `${firstName}'s`,
+            last_name: parentName && parentName.split(" ").length > 1 ? parentName.split(" ").slice(1).join(" ") : "Parent",
+            phone: cleanPhone,
+            email: generatedEmail,
+            is_active: true,
+            metadata: {
+              initial_password: plainPassword,
+            },
+          })
+          .select()
+          .single();
+        parentRecord = newP;
+      }
+
+      // Link Parent to Student in student_guardians
+      if (parentRecord && student) {
+        const { data: existingRel } = await admin
           .from("student_guardians")
-          .upsert({
-            student_id: student.id,
-            parent_id: parentRecord.id,
-            relationship: relationship || "GUARDIAN",
-            verification_status: "VERIFIED",
-            can_video_call: true,
-            is_emergency_contact: true,
-          }, { onConflict: "student_id,parent_id" });
+          .select("id")
+          .eq("student_id", student.id)
+          .eq("parent_id", parentRecord.id)
+          .single();
+
+        if (existingRel) {
+          await admin
+            .from("student_guardians")
+            .update({
+              relationship: relationship || "GUARDIAN",
+              verification_status: "VERIFIED",
+              can_video_call: true,
+              is_emergency_contact: true,
+            })
+            .eq("id", existingRel.id);
+        } else {
+          await admin
+            .from("student_guardians")
+            .insert({
+              student_id: student.id,
+              parent_id: parentRecord.id,
+              relationship: relationship || "GUARDIAN",
+              verification_status: "VERIFIED",
+              can_video_call: true,
+              is_emergency_contact: true,
+            });
+        }
       }
     }
 
