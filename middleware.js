@@ -54,14 +54,14 @@ export async function middleware(request) {
     path.startsWith("/api/webhooks") ||
     path.startsWith("/api/health") ||
     path.startsWith("/api/admin/bootstrap") ||
-    path.startsWith("/device") || // Device kiosk has its own token / PIN authentication
-    path.startsWith("/call") || // Active encrypted video calling room
-    path.startsWith("/api/calls") || // Kiosk student calling & active session endpoints
-    path.startsWith("/api/devices") || // Device activation and kiosk directory
+    path.startsWith("/device") || // Device kiosk has its own 4-digit PIN authentication
+    path.startsWith("/call") || // Encrypted video calling room
+    path.startsWith("/api/calls") || // Kiosk student calling & session endpoints
+    path.startsWith("/api/devices") || // Device activation and directory
     path.startsWith("/_next") ||
     path.includes(".");
 
-  // Protected API routes: return JSON 401 instead of HTML redirect
+  // 1. Protected API routes: return JSON 401 instead of HTML redirect
   if (!user && path.startsWith("/api/") && !isPublicPath) {
     return NextResponse.json(
       { success: false, error: { message: "Unauthorized", code: "UNAUTHORIZED" } },
@@ -69,15 +69,15 @@ export async function middleware(request) {
     );
   }
 
-  // Protected Page paths: redirect to login
+  // 2. Protected Page paths: redirect unauthenticated users to login
   if (!user && !isPublicPath) {
     url.pathname = "/login";
     url.searchParams.set("redirectTo", path);
     return NextResponse.redirect(url);
   }
 
-  // If user is already logged in and navigates to login/signup, redirect to respective dashboard
-  if (user && (path === "/login" || path === "/signup")) {
+  // 3. Strict Role-Based Access Control (RBAC) Guard for authenticated users
+  if (user) {
     const { data: profile } = await supabase
       .from("profiles")
       .select("role")
@@ -85,16 +85,36 @@ export async function middleware(request) {
       .single();
 
     const role = profile?.role || "PARENT";
-    if (role === "SUPER_ADMIN") {
-      url.pathname = "/super-admin";
-    } else if (role === "HOSTEL_ADMIN") {
-      url.pathname = "/admin";
-    } else if (role === "WARDEN" || role === "STAFF") {
-      url.pathname = "/staff";
-    } else {
-      url.pathname = "/parent";
+
+    // Prevent Parents from accessing admin or super-admin routes
+    if (role === "PARENT") {
+      if (path.startsWith("/admin") || path.startsWith("/super-admin") || path.startsWith("/staff")) {
+        url.pathname = "/parent";
+        return NextResponse.redirect(url);
+      }
     }
-    return NextResponse.redirect(url);
+
+    // Prevent School Admins from accessing super-admin routes
+    if (role === "HOSTEL_ADMIN") {
+      if (path.startsWith("/super-admin")) {
+        url.pathname = "/admin";
+        return NextResponse.redirect(url);
+      }
+    }
+
+    // If user is logged in and navigates to login/signup, redirect to respective dashboard
+    if (path === "/login" || path === "/signup") {
+      if (role === "SUPER_ADMIN") {
+        url.pathname = "/super-admin";
+      } else if (role === "HOSTEL_ADMIN") {
+        url.pathname = "/admin";
+      } else if (role === "WARDEN" || role === "STAFF") {
+        url.pathname = "/staff";
+      } else {
+        url.pathname = "/parent";
+      }
+      return NextResponse.redirect(url);
+    }
   }
 
   return supabaseResponse;

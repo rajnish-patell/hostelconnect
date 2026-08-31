@@ -383,9 +383,17 @@ export default function JitsiMeetingWrapper({
     }
 
     if (onCallEnded) {
-      onCallEnded();
+      try {
+        onCallEnded();
+      } catch (_) {
+        router.push(isStudent ? "/device" : "/parent/calls");
+      }
     } else {
-      router.push(isStudent ? "/device" : "/parent/calls");
+      if (isStudent) {
+        router.push("/device");
+      } else {
+        router.push("/parent/calls");
+      }
     }
   };
 
