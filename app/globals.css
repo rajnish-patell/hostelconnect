@@ -1,26 +1,113 @@
 @import "tailwindcss";
 
+@custom-variant dark (&:where(.dark, .dark *));
+
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --font-sans: var(--font-public-sans), -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+
+  /* Minimals UI Color Tokens (Light Mode) */
+  --primary: #00A76F;
+  --primary-hover: #007856;
+  --primary-light: #C8FACD;
+  --primary-lighter: #EAFBF1;
+  --primary-dark: #004B34;
+  --primary-contrast: #FFFFFF;
+
+  --background: #FFFFFF;
+  --background-neutral: #F4F6F8;
+  --background-paper: #FFFFFF;
+
+  --text-primary: #1C252E;
+  --text-secondary: #637381;
+  --text-disabled: #919EAB;
+
+  --border-color: #E5E8EB;
+  --divider-color: #F1F3F5;
+
+  /* Shadows */
+  --shadow-card: 0 0 2px 0 rgba(145, 158, 171, 0.2), 0 12px 24px -4px rgba(145, 158, 171, 0.08);
+  --shadow-card-hover: 0 0 2px 0 rgba(145, 158, 171, 0.24), 0 16px 32px -4px rgba(145, 158, 171, 0.12);
+  --shadow-dropdown: 0 0 2px 0 rgba(145, 158, 171, 0.24), 0 20px 40px -4px rgba(145, 158, 171, 0.2);
+  --shadow-primary: 0 8px 16px 0 rgba(0, 167, 111, 0.24);
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+.dark {
+  --primary: #00A76F;
+  --primary-hover: #007856;
+  --primary-light: #004B34;
+  --primary-lighter: #0B2A20;
+  --primary-dark: #003022;
+  --primary-contrast: #FFFFFF;
+
+  --background: #141A21;
+  --background-neutral: #161C24;
+  --background-paper: #212B36;
+
+  --text-primary: #FFFFFF;
+  --text-secondary: #919EAB;
+  --text-disabled: #637381;
+
+  --border-color: #2E3844;
+  --divider-color: #1F2833;
+
+  --shadow-card: 0 0 2px 0 rgba(0, 0, 0, 0.3), 0 12px 24px -4px rgba(0, 0, 0, 0.24);
+  --shadow-card-hover: 0 0 2px 0 rgba(0, 0, 0, 0.4), 0 16px 32px -4px rgba(0, 0, 0, 0.3);
+  --shadow-dropdown: 0 0 2px 0 rgba(0, 0, 0, 0.4), 0 20px 40px -4px rgba(0, 0, 0, 0.4);
+  --shadow-primary: 0 8px 16px 0 rgba(0, 167, 111, 0.24);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+html {
+  scroll-behavior: smooth;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-sans);
+  color: var(--text-primary);
+  background-color: var(--background);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Minimals Utility Classes */
+.minimals-card {
+  background-color: var(--background-paper);
+  border: 1px solid var(--border-color);
+  border-radius: 16px;
+  box-shadow: var(--shadow-card);
+  transition: all 0.2s ease-in-out;
+}
+
+.minimals-card:hover {
+  box-shadow: var(--shadow-card-hover);
+}
+
+.text-gradient {
+  background: linear-gradient(135deg, #00A76F 0%, #004B34 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.dark .text-gradient {
+  background: linear-gradient(135deg, #5BE49B 0%, #00A76F 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+@keyframes floatFade {
+  0% {
+    opacity: 1;
+    transform: translateY(0) scale(0.8);
+  }
+  50% {
+    opacity: 0.9;
+    transform: translateY(-80px) scale(1.2);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-160px) scale(1);
+  }
+}
+
+.animate-float-fade {
+  animation: floatFade 2.5s cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
 }
