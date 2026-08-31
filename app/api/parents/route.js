@@ -20,7 +20,7 @@ export async function GET(request) {
         .select("id, first_name, last_name, email, phone")
         .or(`phone.eq.${cleanPhone},phone.ilike.%${cleanPhone.slice(-10)}%`)
         .limit(1)
-        .single();
+        .maybeSingle();
 
       return NextResponse.json({ success: true, data: parent });
     }
@@ -29,6 +29,11 @@ export async function GET(request) {
     const supabase = await createClient();
 
     // Look up parent record for this user or by email/phone
+    const cleanPhone = (user.user_metadata?.phone || profile?.phone || "").replace(/\D/g, "");
+    let orConditions = [`user_id.eq.${user.id}`];
+    if (user.email) orConditions.push(`email.eq.${user.email}`);
+    if (cleanPhone) orConditions.push(`phone.eq.${cleanPhone}`);
+
     const { data: parent } = await admin
       .from("parents")
       .select(`
@@ -52,9 +57,9 @@ export async function GET(request) {
           )
         )
       `)
-      .or(`user_id.eq.${user.id},email.eq.${user.email}`)
+      .or(orConditions.join(","))
       .limit(1)
-      .single();
+      .maybeSingle();
 
     if (parent) {
       return NextResponse.json({ success: true, data: parent });

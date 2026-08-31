@@ -1,21 +1,23 @@
 "use client";
 
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import { useRouter } from "next/navigation";
-import { PhoneCall, Video, X, Volume2, ShieldCheck, User, CheckCircle2 } from "lucide-react";
+import { PhoneCall, Video, X, CheckCircle2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { createClient } from "@/lib/supabase/client";
 
 export default function IncomingCallNotification({ user, profile }) {
   const router = useRouter();
   const [incomingCall, setIncomingCall] = useState(null);
-  const [dismissedCallId, setDismissedCallId] = useState(null);
+  const dismissedIdsRef = useRef(new Set());
   const audioContextRef = useRef(null);
   const ringIntervalRef = useRef(null);
-  const supabase = createClient();
+  const supabaseRef = useRef(null);
+  const intervalRef = useRef(null);
+  const isMountedRef = useRef(true);
 
   // Play synthetic telephone ring chime
-  const playRingChime = () => {
+  const playRingChime = useCallback(() => {
     try {
       const AudioContext = window.AudioContext || window.webkitAudioContext;
       if (!AudioContext) return;
@@ -48,73 +50,84 @@ export default function IncomingCallNotification({ user, profile }) {
       osc1.stop(ctx.currentTime + 0.8);
       osc2.stop(ctx.currentTime + 0.8);
     } catch {
-      // Audio playback restricted by user interaction policy
+      // Audio playback restricted
     }
-  };
+  }, []);
 
-  // Poll & Supabase Realtime Listener for incoming calls
-  useEffect(() => {
-    let isMounted = true;
+  // Main poll function — stable reference, no dependency on state
+  const checkIncomingCalls = useCallback(async () => {
+    if (!isMountedRef.current) return;
+    try {
+      const res = await fetch("/api/calls?limit=5");
+      if (!res.ok || !isMountedRef.current) return;
+      const json = await res.json();
+      if (!isMountedRef.current || !json.success || !Array.isArray(json.data)) return;
 
-    async function checkIncomingCalls() {
-      try {
-        const res = await fetch("/api/calls?limit=5");
-        if (!res.ok) return;
-        const json = await res.json();
-        if (!isMounted) return;
+      const tenMinsAgo = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+      const activeCall = json.data.find(
+        (c) =>
+          (c.status === "READY" || c.status === "IN_PROGRESS") &&
+          c.created_at >= tenMinsAgo &&
+          !dismissedIdsRef.current.has(c.id)
+      );
 
-        if (json.success && Array.isArray(json.data)) {
-          // Find any call that is READY or IN_PROGRESS and created in the last 10 minutes
-          const tenMinsAgo = new Date(Date.now() - 10 * 60 * 1000).toISOString();
-          const activeCall = json.data.find(
-            (c) =>
-              (c.status === "READY" || c.status === "IN_PROGRESS") &&
-              c.created_at >= tenMinsAgo &&
-              c.id !== dismissedCallId
-          );
-
-          if (activeCall && (!incomingCall || incomingCall.id !== activeCall.id)) {
-            setIncomingCall(activeCall);
-            playRingChime();
-          } else if (!activeCall && incomingCall) {
-            setIncomingCall(null);
+      setIncomingCall((prev) => {
+        if (activeCall) {
+          if (!prev || prev.id !== activeCall.id) {
+            return activeCall;
           }
+          return prev;
         }
-      } catch (err) {
-        console.error("Error polling incoming calls:", err);
-      }
+        return null;
+      });
+    } catch (err) {
+      console.error("Error polling incoming calls:", err);
     }
+  }, []); // Empty deps — never recreated
 
-    // Check immediately and every 2 seconds
+  // Setup polling + Supabase channel ONCE on mount
+  useEffect(() => {
+    isMountedRef.current = true;
+    supabaseRef.current = createClient();
+
+    // Initial check
     checkIncomingCalls();
-    const interval = setInterval(checkIncomingCalls, 2000);
 
-    // Also listen to Supabase Realtime broadcast channel
-    const channel = supabase.channel("hct_global_incoming_calls");
+    // Poll every 3 seconds
+    intervalRef.current = setInterval(checkIncomingCalls, 3000);
+
+    // Supabase Realtime for instant push
+    const channel = supabaseRef.current.channel("hct_incoming_calls_v2");
     channel
-      .on("broadcast", { event: "new_call" }, () => {
-        checkIncomingCalls();
-      })
+      .on("broadcast", { event: "new_call" }, checkIncomingCalls)
       .subscribe();
 
     return () => {
-      isMounted = false;
-      clearInterval(interval);
-      supabase.removeChannel(channel);
+      isMountedRef.current = false;
+      if (intervalRef.current) clearInterval(intervalRef.current);
+      if (ringIntervalRef.current) clearInterval(ringIntervalRef.current);
+      try { supabaseRef.current?.removeChannel(channel); } catch (_) {}
     };
-  }, [dismissedCallId, incomingCall]);
+  }, []); // Empty — runs only ONCE
 
-  // Repeated chime while incoming call modal is active
+  // Play ring chime when a new call arrives
   useEffect(() => {
     if (incomingCall) {
+      playRingChime();
       ringIntervalRef.current = setInterval(playRingChime, 2500);
     } else {
-      if (ringIntervalRef.current) clearInterval(ringIntervalRef.current);
+      if (ringIntervalRef.current) {
+        clearInterval(ringIntervalRef.current);
+        ringIntervalRef.current = null;
+      }
     }
     return () => {
-      if (ringIntervalRef.current) clearInterval(ringIntervalRef.current);
+      if (ringIntervalRef.current) {
+        clearInterval(ringIntervalRef.current);
+        ringIntervalRef.current = null;
+      }
     };
-  }, [incomingCall]);
+  }, [incomingCall, playRingChime]);
 
   if (!incomingCall) return null;
 
@@ -130,14 +143,14 @@ export default function IncomingCallNotification({ user, profile }) {
 
   const handleDismiss = () => {
     if (ringIntervalRef.current) clearInterval(ringIntervalRef.current);
-    setDismissedCallId(incomingCall.id);
+    dismissedIdsRef.current.add(incomingCall.id);
     setIncomingCall(null);
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-[#1C252E]/70 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in duration-300">
+    <div className="fixed inset-0 z-[9999] bg-[#1C252E]/70 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in duration-300">
       <div className="relative w-full max-w-sm sm:max-w-md bg-white dark:bg-[#212B36] rounded-3xl border border-[#00A76F]/40 shadow-2xl p-6 sm:p-8 text-center space-y-6 animate-in zoom-in-95 duration-200">
-        {/* Dismiss 'X' Button */}
+        {/* Dismiss Button */}
         <button
           type="button"
           onClick={handleDismiss}
@@ -149,7 +162,7 @@ export default function IncomingCallNotification({ user, profile }) {
 
         {/* Pulsing Green Call Icon */}
         <div className="relative mx-auto w-24 h-24 sm:w-28 sm:h-28 flex items-center justify-center">
-          <div className="absolute inset-0 rounded-full bg-[#00A76F]/20 animate-ping duration-1000" />
+          <div className="absolute inset-0 rounded-full bg-[#00A76F]/20 animate-ping" />
           <div className="absolute -inset-2 rounded-full bg-[#00A76F]/10 animate-pulse" />
           <div className="relative w-20 h-20 sm:w-24 sm:h-24 rounded-full bg-gradient-to-br from-[#00A76F] via-[#007856] to-[#004B34] text-white flex items-center justify-center shadow-xl shadow-[#00A76F]/40 ring-4 ring-white dark:ring-[#212B36]">
             <PhoneCall className="w-9 h-9 sm:w-11 sm:h-11 animate-bounce" />
