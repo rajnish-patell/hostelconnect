@@ -23,10 +23,7 @@ export default function AdminSchedulesPage() {
   const [emergencyCallsEnabled, setEmergencyCallsEnabled] = useState(true);
 
   // Blocked Dates / Holidays
-  const [blockedDates, setBlockedDates] = useState([
-    { date: "2026-10-20", reason: "Hostel Annual Sports Day" },
-    { date: "2026-11-01", reason: "Diwali Festival Break" },
-  ]);
+  const [blockedDates, setBlockedDates] = useState([]);
   const [newDate, setNewDate] = useState("");
   const [newReason, setNewReason] = useState("");
 

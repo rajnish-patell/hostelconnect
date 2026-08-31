@@ -9,13 +9,7 @@ import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 
 export default function AdminRoomsPage() {
-  const [rooms, setRooms] = useState([
-    { id: "1", name: "Dorm 101", floor: "Ground Floor", capacity: 4, occupied: 3 },
-    { id: "2", name: "Dorm 102", floor: "Ground Floor", capacity: 4, occupied: 4 },
-    { id: "3", name: "Dorm 201", floor: "First Floor", capacity: 6, occupied: 5 },
-    { id: "4", name: "Dorm 202", floor: "First Floor", capacity: 6, occupied: 2 },
-  ]);
-
+  const [rooms, setRooms] = useState([]);
   const [showModal, setShowModal] = useState(false);
   const [name, setName] = useState("");
   const [floor, setFloor] = useState("");
@@ -47,7 +41,7 @@ export default function AdminRoomsPage() {
           <p className="text-sm text-slate-500">Manage residential blocks, floors, and student room assignments</p>
         </div>
 
-        <Button onClick={() => setShowModal(true)} className="bg-[#00A76F] hover:bg-[#007856] font-bold rounded-xl gap-1.5 shadow-md shadow-[#00A76F]/25 text-white">
+        <Button onClick={() => setShowModal(true)} className="bg-[#00A76F] hover:bg-[#007856] font-bold rounded-xl gap-1.5 shadow-md shadow-[#00A76F]/25 text-white cursor-pointer">
           <Plus className="w-4 h-4" /> Add New Dorm
         </Button>
       </div>
@@ -59,35 +53,43 @@ export default function AdminRoomsPage() {
         </div>
       )}
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
-        {rooms.map((room) => (
-          <Card key={room.id} className="p-6 flex flex-col justify-between space-y-4 hover:shadow-md transition-shadow">
-            <div className="flex items-start justify-between">
-              <div className="flex items-center gap-3">
-                <div className="w-12 h-12 rounded-2xl bg-[#EAFBF1] dark:bg-[#00A76F]/20 text-[#00A76F] flex items-center justify-center font-bold">
-                  <Building className="w-6 h-6" />
+      {rooms.length === 0 ? (
+        <div className="p-12 text-center rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
+          <Building className="w-10 h-10 text-slate-300 mx-auto mb-2" />
+          <p className="font-semibold text-slate-700 dark:text-slate-200">No dormitory rooms added yet</p>
+          <p className="text-xs text-slate-400 mt-1">Click &quot;Add New Dorm&quot; to configure your hostel buildings and wings.</p>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+          {rooms.map((room) => (
+            <Card key={room.id} className="p-5 rounded-2xl border-slate-200 dark:border-slate-800 shadow-sm space-y-4 bg-white dark:bg-slate-900">
+              <div className="flex items-start justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="w-12 h-12 rounded-2xl bg-[#EAFBF1] dark:bg-[#00A76F]/20 text-[#00A76F] flex items-center justify-center font-bold">
+                    <Building className="w-6 h-6" />
+                  </div>
+                  <div>
+                    <h3 className="font-extrabold text-base text-slate-900 dark:text-white">{room.name}</h3>
+                    <p className="text-xs text-slate-500">{room.floor}</p>
+                  </div>
                 </div>
-                <div>
-                  <h3 className="font-extrabold text-base text-slate-900 dark:text-white">{room.name}</h3>
-                  <p className="text-xs text-slate-500">{room.floor}</p>
-                </div>
+                <Badge variant={room.occupied >= room.capacity ? "destructive" : "secondary"}>
+                  {room.occupied >= room.capacity ? "Full" : "Available"}
+                </Badge>
               </div>
-              <Badge variant={room.occupied >= room.capacity ? "destructive" : "secondary"}>
-                {room.occupied >= room.capacity ? "Full" : "Available"}
-              </Badge>
-            </div>
 
-            <div className="pt-3 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between text-xs text-slate-600 dark:text-slate-400">
-              <span className="flex items-center gap-1">
-                <Users className="w-3.5 h-3.5 text-slate-400" /> Residents:
-              </span>
-              <span className="font-bold font-mono text-slate-900 dark:text-white">
-                {room.occupied} / {room.capacity}
-              </span>
-            </div>
-          </Card>
-        ))}
-      </div>
+              <div className="pt-3 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between text-xs text-slate-600 dark:text-slate-400">
+                <span className="flex items-center gap-1">
+                  <Users className="w-3.5 h-3.5 text-slate-400" /> Residents:
+                </span>
+                <span className="font-bold font-mono text-slate-900 dark:text-white">
+                  {room.occupied} / {room.capacity}
+                </span>
+              </div>
+            </Card>
+          ))}
+        </div>
+      )}
 
       {/* Add Dorm Modal */}
       {showModal && (
@@ -95,7 +97,7 @@ export default function AdminRoomsPage() {
           <Card className="w-full max-w-md p-6 bg-white dark:bg-slate-900 space-y-4 animate-in fade-in zoom-in-95">
             <div className="flex items-center justify-between pb-2 border-b border-slate-100 dark:border-slate-800">
               <h3 className="font-bold text-lg">Add Dormitory Room</h3>
-              <button onClick={() => setShowModal(false)} className="text-slate-400 hover:text-slate-600">
+              <button onClick={() => setShowModal(false)} className="text-slate-400 hover:text-slate-600 cursor-pointer">
                 <X className="w-5 h-5" />
               </button>
             </div>
@@ -117,10 +119,10 @@ export default function AdminRoomsPage() {
               </div>
 
               <div className="flex gap-2 pt-3">
-                <Button type="button" variant="outline" onClick={() => setShowModal(false)} className="w-full">
+                <Button type="button" variant="outline" onClick={() => setShowModal(false)} className="w-full cursor-pointer">
                   Cancel
                 </Button>
-                <Button type="submit" className="w-full bg-[#00A76F] hover:bg-[#007856] text-white font-bold shadow-md shadow-[#00A76F]/25">
+                <Button type="submit" className="w-full bg-[#00A76F] hover:bg-[#007856] text-white font-bold shadow-md shadow-[#00A76F]/25 cursor-pointer">
                   Save Room
                 </Button>
               </div>

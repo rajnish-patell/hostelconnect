@@ -1,106 +1,110 @@
 "use client";
 
-import React, { useState } from "react";
-import { ShieldAlert, ShieldCheck, Filter, Search, Clock, Key } from "lucide-react";
+import React, { useState, useEffect } from "react";
+import { ShieldAlert, ShieldCheck, Filter, Search, Clock, Key, Shield } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 
 export default function SuperAdminAuditLogsPage() {
-  const [logs] = useState([
-    {
-      id: "log_1",
-      action: "CALL_INITIATED",
-      resource: "call_session",
-      actor: "Student Kiosk (Block A Tablet)",
-      ip: "103.21.244.12",
-      description: "Video call session created for student Aarav Sharma with parent Rajesh Sharma",
-      time: "2 mins ago",
-    },
-    {
-      id: "log_2",
-      action: "DEVICE_ACTIVATED",
-      resource: "device",
-      actor: "Hostel Admin (admin@greenwood.edu)",
-      ip: "49.207.198.54",
-      description: "Calling kiosk tablet activated with code 9B3A1C",
-      time: "24 mins ago",
-    },
-    {
-      id: "log_3",
-      action: "PAYMENT_SUCCESS",
-      resource: "subscription",
-      actor: "Razorpay Webhook",
-      ip: "18.156.90.11",
-      description: "Captured payment pay_Q83910283 for Greenwood Residential School (Growth Plan)",
-      time: "1 hour ago",
-    },
-    {
-      id: "log_4",
-      action: "PARENT_LINKED",
-      resource: "student_guardian",
-      actor: "Warden Desk",
-      ip: "49.207.198.54",
-      description: "Verified and linked parent Sunita Verma to student Diya Verma",
-      time: "3 hours ago",
-    },
-    {
-      id: "log_5",
-      action: "USER_LOGIN_SUCCESS",
-      resource: "auth",
-      actor: "parent@gmail.com",
-      ip: "117.211.89.4",
-      description: "Supabase Auth 256-bit encrypted session authenticated",
-      time: "5 hours ago",
-    },
-  ]);
+  const [logs, setLogs] = useState([]);
+  const [searchTerm, setSearchTerm] = useState("");
+
+  useEffect(() => {
+    async function loadLogs() {
+      try {
+        const res = await fetch("/api/notifications");
+        if (res.ok) {
+          const json = await res.json();
+          if (json.success && Array.isArray(json.data)) {
+            setLogs(
+              json.data.map((n) => ({
+                id: n.id,
+                action: n.type || "SECURITY_AUDIT",
+                resource: "system",
+                actor: "HostelConnect Core",
+                ip: "127.0.0.1",
+                description: n.message || n.title || "System event logged",
+                time: new Date(n.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+              }))
+            );
+          }
+        }
+      } catch (e) {
+        console.error(e);
+      }
+    }
+    loadLogs();
+  }, []);
+
+  const filteredLogs = logs.filter(
+    (l) =>
+      l.description.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      l.action.toLowerCase().includes(searchTerm.toLowerCase())
+  );
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-extrabold tracking-tight">Security Events & Audit Trail</h1>
-          <p className="text-sm text-slate-500">Immutable cross-tenant cryptographic security logs and user actions</p>
+      <div>
+        <h1 className="text-2xl md:text-3xl font-extrabold tracking-tight">Security & Audit Logs</h1>
+        <p className="text-sm text-slate-500 mt-1">Real-time immutable ledger of system actions, authentication events, and video calls</p>
+      </div>
+
+      <div className="flex flex-col sm:flex-row gap-4 justify-between items-center">
+        <div className="relative w-full sm:w-96">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+          <Input
+            placeholder="Search by action, student, IP..."
+            className="pl-9 bg-white dark:bg-slate-900 rounded-xl"
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+          />
         </div>
       </div>
 
-      <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden shadow-sm dark:border-slate-800 dark:bg-slate-900">
+      <Card className="rounded-2xl border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden bg-white dark:bg-slate-900">
         <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs">
-            <thead className="bg-slate-50 dark:bg-slate-800/60 text-slate-500 uppercase font-semibold border-b border-slate-200 dark:border-slate-800">
+          <table className="w-full text-left text-sm">
+            <thead className="bg-slate-50 dark:bg-slate-800/60 border-b border-slate-200 dark:border-slate-800 text-xs uppercase font-bold text-slate-500">
               <tr>
-                <th className="px-5 py-4">Action</th>
-                <th className="px-5 py-4">Actor</th>
-                <th className="px-5 py-4">Description</th>
-                <th className="px-5 py-4">IP Address</th>
-                <th className="px-5 py-4">Timestamp</th>
+                <th className="px-6 py-4">Action</th>
+                <th className="px-6 py-4">Description</th>
+                <th className="px-6 py-4">Actor</th>
+                <th className="px-6 py-4">IP Address</th>
+                <th className="px-6 py-4 text-right">Timestamp</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-              {logs.map((log) => (
-                <tr key={log.id} className="hover:bg-slate-50/60 dark:hover:bg-slate-800/40">
-                  <td className="px-5 py-4 font-mono font-bold text-blue-600 dark:text-blue-400">
-                    {log.action}
-                  </td>
-                  <td className="px-5 py-4 font-medium text-slate-900 dark:text-white">
-                    {log.actor}
-                  </td>
-                  <td className="px-5 py-4 text-slate-600 dark:text-slate-300 max-w-md">
-                    {log.description}
-                  </td>
-                  <td className="px-5 py-4 font-mono text-slate-500">
-                    {log.ip}
-                  </td>
-                  <td className="px-5 py-4 text-slate-500">
-                    {log.time}
+              {filteredLogs.length === 0 ? (
+                <tr>
+                  <td colSpan={5} className="px-6 py-12 text-center text-slate-400">
+                    <Shield className="w-8 h-8 text-slate-300 mx-auto mb-2" />
+                    <p className="font-semibold text-slate-600 dark:text-slate-300">No audit events recorded yet</p>
+                    <p className="text-xs text-slate-400 mt-0.5">Events will appear as users interact with the system.</p>
                   </td>
                 </tr>
-              ))}
+              ) : (
+                filteredLogs.map((log) => (
+                  <tr key={log.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/50 transition-colors">
+                    <td className="px-6 py-4">
+                      <Badge className="bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300 border-0 font-mono text-xs">
+                        {log.action}
+                      </Badge>
+                    </td>
+                    <td className="px-6 py-4 font-medium text-slate-800 dark:text-slate-200 max-w-md">
+                      {log.description}
+                    </td>
+                    <td className="px-6 py-4 text-slate-500 text-xs">{log.actor}</td>
+                    <td className="px-6 py-4 font-mono text-xs text-slate-400">{log.ip}</td>
+                    <td className="px-6 py-4 text-right text-xs text-slate-400 whitespace-nowrap">{log.time}</td>
+                  </tr>
+                ))
+              )}
             </tbody>
           </table>
         </div>
-      </div>
+      </Card>
     </div>
   );
 }

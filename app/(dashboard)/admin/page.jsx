@@ -91,10 +91,10 @@ function MiniBarChart() {
    ═══════════════════════════════════════ */
 export default function AdminDashboardPage() {
   const [stats, setStats] = useState({
-    totalStudents: 124,
-    activeDevices: 3,
-    callsToday: 18,
-    minutesUsed: 270,
+    totalStudents: 0,
+    activeDevices: 0,
+    callsToday: 0,
+    minutesUsed: 0,
   });
 
   const [recentCalls, setRecentCalls] = useState([]);
@@ -103,14 +103,42 @@ export default function AdminDashboardPage() {
   useEffect(() => {
     async function loadDashboard() {
       try {
-        const res = await fetch("/api/calls?limit=5");
-        const contentType = res.headers.get("content-type");
-        if (contentType && contentType.includes("application/json")) {
-          const json = await res.json();
-          if (json.success) {
-            setRecentCalls(json.data || []);
-          }
+        const [callsRes, studentsRes, devicesRes] = await Promise.allSettled([
+          fetch("/api/calls?limit=10"),
+          fetch("/api/students"),
+          fetch("/api/devices"),
+        ]);
+
+        let calls = [];
+        let students = [];
+        let devices = [];
+
+        if (callsRes.status === "fulfilled" && callsRes.value.ok) {
+          const json = await callsRes.value.json();
+          if (json.success && Array.isArray(json.data)) calls = json.data;
         }
+
+        if (studentsRes.status === "fulfilled" && studentsRes.value.ok) {
+          const json = await studentsRes.value.json();
+          if (json.success && Array.isArray(json.data)) students = json.data;
+        }
+
+        if (devicesRes.status === "fulfilled" && devicesRes.value.ok) {
+          const json = await devicesRes.value.json();
+          if (json.success && Array.isArray(json.data)) devices = json.data;
+        }
+
+        setRecentCalls(calls);
+
+        const totalSecs = calls.reduce((acc, c) => acc + (c.duration_seconds || 0), 0);
+        const mins = Math.ceil(totalSecs / 60);
+
+        setStats({
+          totalStudents: students.length,
+          activeDevices: devices.length > 0 ? devices.length : 1,
+          callsToday: calls.length,
+          minutesUsed: mins,
+        });
       } catch (e) {
         console.error("Dashboard load error:", e);
       } finally {
