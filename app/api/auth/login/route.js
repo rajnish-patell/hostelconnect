@@ -23,6 +23,7 @@ export async function POST(request) {
         .from("parents")
         .select("*")
         .eq("phone", cleanNumber)
+        .eq("is_active", true)
         .order("created_at", { ascending: false })
         .limit(1)
         .single();
@@ -38,7 +39,6 @@ export async function POST(request) {
         );
 
         if (existingUser) {
-          // Sync Auth user password to match the entered password if it's the registered parent
           await admin.auth.admin.updateUserById(existingUser.id, {
             password: password,
             email_confirm: true,
@@ -49,7 +49,7 @@ export async function POST(request) {
           }
         } else {
           // Auto-create Auth user for this parent
-          const { data: newAuth, error: createErr } = await admin.auth.admin.createUser({
+          const { data: newAuth } = await admin.auth.admin.createUser({
             email: resolvedEmail,
             password: password,
             email_confirm: true,
@@ -74,7 +74,11 @@ export async function POST(request) {
           }
         }
       } else {
-        resolvedEmail = `${cleanNumber}@parent.hostelconnect.in`;
+        // If parent does not exist or was deleted with the school
+        return NextResponse.json({
+          success: false,
+          error: { message: "No active parent account found. If your school was removed, your account is deactivated." },
+        }, { status: 401 });
       }
     }
 
@@ -86,7 +90,6 @@ export async function POST(request) {
       password,
     });
 
-    // Fallback if client-side cookie session needs direct admin verification
     if (error) {
       console.error("[Login Auth Error]:", error.message);
       return NextResponse.json({
@@ -95,14 +98,75 @@ export async function POST(request) {
       }, { status: 401 });
     }
 
-    // 3. Fetch user role
+    // 3. Fetch user profile and check role
     const { data: profile } = await supabase
       .from("profiles")
-      .select("role")
+      .select("*")
       .eq("id", data.user.id)
       .single();
 
     const role = profile?.role || "PARENT";
+
+    // 4. Strict Multi-Tenant & Active School Status Check
+    if (role === "PARENT") {
+      const { data: parentRecord } = await admin
+        .from("parents")
+        .select("id, is_active")
+        .eq("user_id", data.user.id)
+        .single();
+
+      if (!parentRecord || !parentRecord.is_active) {
+        await supabase.auth.signOut();
+        return NextResponse.json({
+          success: false,
+          error: { message: "This parent account has been deactivated because the school campus was removed." },
+        }, { status: 403 });
+      }
+
+      // Check if this parent has at least one active student linked to an active school
+      const { data: guardians } = await admin
+        .from("student_guardians")
+        .select("id, student:students(id, is_active, hostel:hostels(id, status))")
+        .eq("parent_id", parentRecord.id);
+
+      const hasActiveSchool = guardians?.some(
+        g => g.student && g.student.is_active && g.student.hostel && g.student.hostel.status === "ACTIVE"
+      );
+
+      if (!hasActiveSchool) {
+        await supabase.auth.signOut();
+        return NextResponse.json({
+          success: false,
+          error: { message: "Your registered school campus is no longer active or has been removed." },
+        }, { status: 403 });
+      }
+    } else if (role === "HOSTEL_ADMIN" || role === "WARDEN" || role === "STAFF") {
+      // Check if their hostel still exists and is ACTIVE
+      const { data: member } = await admin
+        .from("hostel_members")
+        .select("id, is_active, hostel:hostels(id, status)")
+        .eq("user_id", data.user.id)
+        .eq("is_active", true)
+        .single();
+
+      const { data: adminHostel } = await admin
+        .from("hostels")
+        .select("id, status")
+        .eq("metadata->>admin_email", data.user.email)
+        .single();
+
+      const isActiveCampus =
+        (member?.hostel && member.hostel.status === "ACTIVE") ||
+        (adminHostel && adminHostel.status === "ACTIVE");
+
+      if (!isActiveCampus) {
+        await supabase.auth.signOut();
+        return NextResponse.json({
+          success: false,
+          error: { message: "This school campus has been deleted or deactivated." },
+        }, { status: 403 });
+      }
+    }
 
     return NextResponse.json({
       success: true,

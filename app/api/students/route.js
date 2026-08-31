@@ -243,3 +243,51 @@ export async function POST(request) {
     return NextResponse.json({ success: false, error: { code: "SERVER_ERROR", message: err.message } }, { status: 500 });
   }
 }
+
+export async function DELETE(request) {
+  try {
+    const { searchParams } = new URL(request.url);
+    const id = searchParams.get("id");
+    if (!id) {
+      return NextResponse.json({ success: false, error: { code: "VALIDATION_ERROR", message: "Student ID is required." } }, { status: 400 });
+    }
+
+    const admin = createAdminClient();
+
+    // 1. Get guardians of this student
+    const { data: guardians } = await admin
+      .from("student_guardians")
+      .select("parent_id")
+      .eq("student_id", id);
+
+    const parentIds = (guardians || []).map((g) => g.parent_id);
+
+    // 2. Delete calls, guardians, and student
+    await admin.from("call_sessions").delete().eq("student_id", id);
+    await admin.from("student_guardians").delete().eq("student_id", id);
+    await admin.from("students").delete().eq("id", id);
+
+    // 3. Clean up orphaned parents
+    for (const pId of parentIds) {
+      const { data: remaining } = await admin
+        .from("student_guardians")
+        .select("id")
+        .eq("parent_id", pId);
+
+      if (!remaining || remaining.length === 0) {
+        const { data: pRecord } = await admin.from("parents").select("user_id").eq("id", pId).single();
+        if (pRecord?.user_id) {
+          await admin.from("profiles").update({ is_active: false }).eq("id", pRecord.user_id);
+          try {
+            await admin.auth.admin.deleteUser(pRecord.user_id);
+          } catch (_) {}
+        }
+        await admin.from("parents").delete().eq("id", pId);
+      }
+    }
+
+    return NextResponse.json({ success: true, message: "Student and linked data removed cleanly." });
+  } catch (err) {
+    return NextResponse.json({ success: false, error: { code: "SERVER_ERROR", message: err.message } }, { status: 500 });
+  }
+}

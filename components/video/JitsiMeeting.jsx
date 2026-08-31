@@ -35,6 +35,14 @@ import {
 import { Button } from "@/components/ui/button";
 import { formatDuration } from "@/lib/utils";
 
+const ICE_SERVERS = {
+  iceServers: [
+    { urls: "stun:stun.l.google.com:19302" },
+    { urls: "stun:stun1.l.google.com:19302" },
+    { urls: "stun:stun2.l.google.com:19302" },
+  ],
+};
+
 export default function JitsiMeetingWrapper({
   sessionId,
   meetingId,
@@ -56,7 +64,7 @@ export default function JitsiMeetingWrapper({
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [raisedHand, setRaisedHand] = useState(false);
   const [snapshotFlash, setSnapshotFlash] = useState(false);
-  const [peerConnected, setPeerConnected] = useState(false);
+  const [hasRemoteVideo, setHasRemoteVideo] = useState(false);
 
   // In-Call Live Chat Drawer
   const [isChatOpen, setIsChatOpen] = useState(false);
@@ -89,6 +97,7 @@ export default function JitsiMeetingWrapper({
   const localVideoRef = useRef(null);
   const remoteVideoRef = useRef(null);
   const localStreamRef = useRef(null);
+  const peerConnectionRef = useRef(null);
   const broadcastChannelRef = useRef(null);
   const chatScrollRef = useRef(null);
 
@@ -96,14 +105,17 @@ export default function JitsiMeetingWrapper({
   const remainingSeconds = Math.max(0, maxSeconds - elapsedSeconds);
   const myName = isStudent ? studentName : parentName;
   const peerName = isStudent ? parentName : studentName;
-  const myRole = isStudent ? "Student (Hostel Kiosk)" : "Parent / Guardian";
+  const myRole = isStudent ? "STUDENT" : "PARENT";
 
-  // 1. Initialize Direct Camera & Microphone Stream
+  // 1. Initialize Direct Camera & WebRTC Peer Connection
   useEffect(() => {
-    async function startMedia() {
+    let isCleanedUp = false;
+
+    async function setupWebRTC() {
       try {
+        let stream = null;
         if (typeof navigator !== "undefined" && navigator.mediaDevices?.getUserMedia) {
-          const stream = await navigator.mediaDevices.getUserMedia({
+          stream = await navigator.mediaDevices.getUserMedia({
             video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: "user" },
             audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
           });
@@ -112,41 +124,83 @@ export default function JitsiMeetingWrapper({
             localVideoRef.current.srcObject = stream;
           }
         }
+
+        // Initialize RTCPeerConnection
+        if (typeof window !== "undefined" && window.RTCPeerConnection) {
+          const pc = new RTCPeerConnection(ICE_SERVERS);
+          peerConnectionRef.current = pc;
+
+          // Add local tracks to peer connection
+          if (stream) {
+            stream.getTracks().forEach((track) => {
+              pc.addTrack(track, stream);
+            });
+          }
+
+          // Handle incoming remote tracks
+          pc.ontrack = (event) => {
+            if (remoteVideoRef.current && event.streams[0]) {
+              remoteVideoRef.current.srcObject = event.streams[0];
+              setHasRemoteVideo(true);
+            }
+          };
+
+          // Setup Signaling BroadcastChannel
+          const channelName = `hct_meet_${meetingId || sessionId || "safe-room"}`;
+          const bc = new BroadcastChannel(channelName);
+          broadcastChannelRef.current = bc;
+
+          pc.onicecandidate = (event) => {
+            if (event.candidate) {
+              bc.postMessage({ type: "ICE_CANDIDATE", candidate: event.candidate, senderRole: myRole });
+            }
+          };
+
+          // Student acts as caller by default, Parent acts as answerer
+          if (isStudent) {
+            const offer = await pc.createOffer();
+            await pc.setLocalDescription(offer);
+            bc.postMessage({ type: "SDP_OFFER", sdp: offer, senderRole: myRole });
+          } else {
+            bc.postMessage({ type: "PEER_READY", senderRole: myRole });
+          }
+
+          bc.onmessage = async (event) => {
+            const data = event.data;
+            if (!data || data.senderRole === myRole || isCleanedUp) return;
+
+            try {
+              if (data.type === "PEER_READY" && isStudent) {
+                const offer = await pc.createOffer();
+                await pc.setLocalDescription(offer);
+                bc.postMessage({ type: "SDP_OFFER", sdp: offer, senderRole: myRole });
+              } else if (data.type === "SDP_OFFER" && !isStudent) {
+                await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
+                const answer = await pc.createAnswer();
+                await pc.setLocalDescription(answer);
+                bc.postMessage({ type: "SDP_ANSWER", sdp: answer, senderRole: myRole });
+              } else if (data.type === "SDP_ANSWER" && isStudent) {
+                await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
+              } else if (data.type === "ICE_CANDIDATE") {
+                await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
+              } else if (data.type === "CHAT_MESSAGE") {
+                setChatMessages((prev) => [...prev, data.message]);
+              } else if (data.type === "EMOJI_REACTION") {
+                triggerReaction(data.emoji, false);
+              } else if (data.type === "CALL_ENDED") {
+                handleEndCall("REMOTE_HANGUP", false);
+              }
+            } catch (sigErr) {
+              console.warn("WebRTC Signaling event error:", sigErr);
+            }
+          };
+        }
       } catch (err) {
         console.warn("Camera/Mic access note:", err.message);
       }
     }
 
-    startMedia();
-
-    // Setup Cross-Tab / Cross-Device Signaling Channel for Instant Peer Connection
-    const channelName = `google_meet_${meetingId || sessionId || "safe-room"}`;
-    if (typeof window !== "undefined" && "BroadcastChannel" in window) {
-      const bc = new BroadcastChannel(channelName);
-      broadcastChannelRef.current = bc;
-
-      // Announce presence
-      bc.postMessage({ type: "PEER_JOINED", sender: myName, role: isStudent ? "STUDENT" : "PARENT" });
-
-      bc.onmessage = (event) => {
-        const msg = event.data;
-        if (!msg) return;
-
-        if (msg.type === "PEER_JOINED") {
-          setPeerConnected(true);
-          // Respond back so new peer knows we are here
-          bc.postMessage({ type: "PEER_ACK", sender: myName });
-        } else if (msg.type === "PEER_ACK") {
-          setPeerConnected(true);
-        } else if (msg.type === "CHAT_MESSAGE") {
-          setChatMessages((prev) => [...prev, msg.message]);
-        } else if (msg.type === "EMOJI_REACTION") {
-          triggerReaction(msg.emoji, false);
-        } else if (msg.type === "CALL_ENDED") {
-          handleEndCall("REMOTE_HANGUP", false);
-        }
-      };
-    }
+    setupWebRTC();
 
     if (sessionId) {
       fetch(`/api/calls/${sessionId}/start`, { method: "POST" }).catch(() => {});
@@ -157,15 +211,19 @@ export default function JitsiMeetingWrapper({
     }, 1000);
 
     return () => {
+      isCleanedUp = true;
       if (timerRef.current) clearInterval(timerRef.current);
       if (localStreamRef.current) {
         localStreamRef.current.getTracks().forEach((track) => track.stop());
+      }
+      if (peerConnectionRef.current) {
+        peerConnectionRef.current.close();
       }
       if (broadcastChannelRef.current) {
         broadcastChannelRef.current.close();
       }
     };
-  }, [meetingId, sessionId]);
+  }, [meetingId, sessionId, isStudent]);
 
   // Supervision Warnings & Auto Hangup
   useEffect(() => {
@@ -236,7 +294,7 @@ export default function JitsiMeetingWrapper({
     if (timerRef.current) clearInterval(timerRef.current);
 
     if (broadcast && broadcastChannelRef.current) {
-      broadcastChannelRef.current.postMessage({ type: "CALL_ENDED" });
+      broadcastChannelRef.current.postMessage({ type: "CALL_ENDED", senderRole: myRole });
     }
 
     if (localStreamRef.current) {
@@ -278,7 +336,7 @@ export default function JitsiMeetingWrapper({
     setMessageInput("");
 
     if (broadcastChannelRef.current) {
-      broadcastChannelRef.current.postMessage({ type: "CHAT_MESSAGE", message: newMsg });
+      broadcastChannelRef.current.postMessage({ type: "CHAT_MESSAGE", message: newMsg, senderRole: myRole });
     }
   };
 
@@ -291,7 +349,7 @@ export default function JitsiMeetingWrapper({
     }, 2500);
 
     if (broadcast && broadcastChannelRef.current) {
-      broadcastChannelRef.current.postMessage({ type: "EMOJI_REACTION", emoji });
+      broadcastChannelRef.current.postMessage({ type: "EMOJI_REACTION", emoji, senderRole: myRole });
     }
     setShowEmojiPicker(false);
   };
@@ -417,26 +475,34 @@ export default function JitsiMeetingWrapper({
       <div className="flex-1 w-full h-full p-2 sm:p-4 grid grid-cols-1 md:grid-cols-2 gap-3 relative overflow-hidden">
         {/* Tile 1: Remote Participant (Mom/Dad or Student) */}
         <div className="relative w-full h-full rounded-2xl bg-[#3c4043] overflow-hidden flex items-center justify-center border border-[#3c4043]/60 shadow-xl group">
-          {/* If peer is connected & camera active, render stream, else Google Meet avatar tile */}
-          <div className="flex flex-col items-center justify-center space-y-3 p-6 text-center">
-            <div className="relative">
-              <div className="w-24 h-24 sm:w-32 sm:h-32 rounded-full bg-gradient-to-br from-[#00A76F] via-[#007856] to-[#004B34] text-white flex items-center justify-center font-extrabold text-4xl sm:text-5xl shadow-2xl ring-4 ring-white/10 animate-pulse">
-                {peerName.charAt(0)}
+          <video
+            ref={remoteVideoRef}
+            autoPlay
+            playsInline
+            className={`w-full h-full object-cover ${hasRemoteVideo ? "block" : "hidden"}`}
+          />
+
+          {!hasRemoteVideo && (
+            <div className="flex flex-col items-center justify-center space-y-3 p-6 text-center">
+              <div className="relative">
+                <div className="w-24 h-24 sm:w-32 sm:h-32 rounded-full bg-gradient-to-br from-[#00A76F] via-[#007856] to-[#004B34] text-white flex items-center justify-center font-extrabold text-4xl sm:text-5xl shadow-2xl ring-4 ring-white/10 animate-pulse">
+                  {peerName.charAt(0)}
+                </div>
+                <span className="absolute bottom-1 right-1 w-6 h-6 rounded-full bg-[#00A76F] border-2 border-[#202124] flex items-center justify-center">
+                  <Mic className="w-3 h-3 text-white" />
+                </span>
               </div>
-              <span className="absolute bottom-1 right-1 w-6 h-6 rounded-full bg-[#00A76F] border-2 border-[#202124] flex items-center justify-center">
-                <Mic className="w-3 h-3 text-white" />
-              </span>
+              <div>
+                <h3 className="font-bold text-lg sm:text-xl text-white">{peerName}</h3>
+                <p className="text-xs text-[#5BE49B] flex items-center justify-center gap-1 mt-0.5">
+                  <CheckCircle2 className="w-3.5 h-3.5" /> Live Encrypted Room Connected
+                </p>
+              </div>
             </div>
-            <div>
-              <h3 className="font-bold text-lg sm:text-xl text-white">{peerName}</h3>
-              <p className="text-xs text-[#5BE49B] flex items-center justify-center gap-1 mt-0.5">
-                <CheckCircle2 className="w-3.5 h-3.5" /> Live High-Definition Connected
-              </p>
-            </div>
-          </div>
+          )}
 
           {/* Bottom Left Name Badge */}
-          <div className="absolute bottom-3 left-3 px-3 py-1 rounded-lg bg-black/60 backdrop-blur-md text-xs font-bold text-white flex items-center gap-1.5 border border-white/10">
+          <div className="absolute bottom-3 left-3 px-3 py-1 rounded-lg bg-black/60 backdrop-blur-md text-xs font-bold text-white flex items-center gap-1.5 border border-white/10 z-10">
             <span>{peerName}</span>
           </div>
         </div>
@@ -461,14 +527,14 @@ export default function JitsiMeetingWrapper({
           )}
 
           {/* Bottom Left Name Badge */}
-          <div className="absolute bottom-3 left-3 px-3 py-1 rounded-lg bg-black/60 backdrop-blur-md text-xs font-bold text-white flex items-center gap-2 border border-white/10">
+          <div className="absolute bottom-3 left-3 px-3 py-1 rounded-lg bg-black/60 backdrop-blur-md text-xs font-bold text-white flex items-center gap-2 border border-white/10 z-10">
             <span>{myName} (You)</span>
             {isMuted && <MicOff className="w-3.5 h-3.5 text-red-400" />}
           </div>
 
           {/* Raised Hand Indicator */}
           {raisedHand && (
-            <div className="absolute top-3 left-3 px-3 py-1.5 rounded-full bg-amber-500 text-black font-extrabold text-xs flex items-center gap-1.5 shadow-lg animate-bounce">
+            <div className="absolute top-3 left-3 px-3 py-1.5 rounded-full bg-amber-500 text-black font-extrabold text-xs flex items-center gap-1.5 shadow-lg animate-bounce z-10">
               <Hand className="w-3.5 h-3.5" /> Hand Raised
             </div>
           )}

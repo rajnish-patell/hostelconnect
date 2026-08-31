@@ -193,12 +193,66 @@ export async function DELETE(request) {
     }
 
     const admin = createAdminClient();
+
+    // 1. Get all students in this hostel
+    const { data: students } = await admin
+      .from("students")
+      .select("id")
+      .eq("hostel_id", id);
+
+    const studentIds = (students || []).map((s) => s.id);
+
+    // 2. Get all parent IDs linked to these students
+    let parentIds = [];
+    if (studentIds.length > 0) {
+      const { data: guardians } = await admin
+        .from("student_guardians")
+        .select("parent_id")
+        .in("student_id", studentIds);
+
+      parentIds = [...new Set((guardians || []).map((g) => g.parent_id))];
+    }
+
+    // 3. Delete call sessions
+    await admin.from("call_sessions").delete().eq("hostel_id", id);
+
+    // 4. Delete student guardians and students
+    if (studentIds.length > 0) {
+      await admin.from("student_guardians").delete().in("student_id", studentIds);
+      await admin.from("students").delete().eq("hostel_id", id);
+    }
+
+    // 5. Delete devices, rooms, schedules, and memberships
+    await admin.from("devices").delete().eq("hostel_id", id);
+    await admin.from("rooms").delete().eq("hostel_id", id);
+    await admin.from("hostel_members").delete().eq("hostel_id", id);
+
+    // 6. Clean up or deactivate parents who have no other schools
+    for (const pId of parentIds) {
+      const { data: remainingGuardians } = await admin
+        .from("student_guardians")
+        .select("id")
+        .eq("parent_id", pId);
+
+      if (!remainingGuardians || remainingGuardians.length === 0) {
+        const { data: pRecord } = await admin.from("parents").select("user_id").eq("id", pId).single();
+        if (pRecord?.user_id) {
+          await admin.from("profiles").update({ is_active: false }).eq("id", pRecord.user_id);
+          try {
+            await admin.auth.admin.deleteUser(pRecord.user_id);
+          } catch (_) {}
+        }
+        await admin.from("parents").delete().eq("id", pId);
+      }
+    }
+
+    // 7. Delete Hostel record
     const { error } = await admin.from("hostels").delete().eq("id", id);
     if (error) {
       return NextResponse.json({ success: false, error: { message: error.message } }, { status: 400 });
     }
 
-    return NextResponse.json({ success: true, message: "Hostel campus removed successfully." });
+    return NextResponse.json({ success: true, message: "Hostel campus and associated data removed cleanly." });
   } catch (err) {
     return NextResponse.json({ success: false, error: { message: err.message } }, { status: 500 });
   }
