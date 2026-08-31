@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import {
   PhoneOff,
@@ -32,6 +32,8 @@ import {
   Smile,
   CheckCircle2,
   Radio,
+  Maximize2,
+  Minimize2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { formatDuration } from "@/lib/utils";
@@ -71,9 +73,11 @@ export default function JitsiMeetingWrapper({
   const [hasRemoteVideo, setHasRemoteVideo] = useState(false);
   const [peerConnected, setPeerConnected] = useState(false);
 
-  // In-Call Live Chat Drawer & More Tools Menu
+  // Spotlight / Enlarged view (null: split 50/50, 'remote': remote focused, 'local': self focused)
+  const [spotlightTile, setSpotlightTile] = useState(null);
+
+  // In-Call Live Chat Drawer
   const [isChatOpen, setIsChatOpen] = useState(false);
-  const [isMoreToolsOpen, setIsMoreToolsOpen] = useState(false);
   const [chatMessages, setChatMessages] = useState([
     {
       id: "1",
@@ -103,6 +107,7 @@ export default function JitsiMeetingWrapper({
   const localVideoRef = useRef(null);
   const remoteVideoRef = useRef(null);
   const localStreamRef = useRef(null);
+  const screenStreamRef = useRef(null);
   const peerConnectionRef = useRef(null);
   const broadcastChannelRef = useRef(null);
   const supabaseChannelRef = useRef(null);
@@ -114,6 +119,92 @@ export default function JitsiMeetingWrapper({
   const peerName = isStudent ? parentName : studentName;
   const myRole = isStudent ? "STUDENT" : "PARENT";
   const roomIdentifier = meetingId || sessionId || "safe-room";
+
+  // Helper to send WebRTC signals
+  const sendSignal = useCallback(
+    (signalPayload) => {
+      const payload = { ...signalPayload, senderRole: myRole, timestamp: Date.now() };
+
+      if (supabaseChannelRef.current) {
+        supabaseChannelRef.current.send({
+          type: "broadcast",
+          event: "webrtc_signal",
+          payload,
+        }).catch(() => {});
+      }
+
+      if (broadcastChannelRef.current) {
+        try {
+          broadcastChannelRef.current.postMessage(payload);
+        } catch (_) {}
+      }
+    },
+    [myRole]
+  );
+
+  // Floating Emoji Reactions
+  const triggerReaction = useCallback(
+    (emoji, broadcast = true) => {
+      const id = Date.now().toString() + Math.random();
+      setFloatingEmojis((prev) => [...prev, { id, emoji, left: Math.random() * 60 + 20 }]);
+      setTimeout(() => {
+        setFloatingEmojis((prev) => prev.filter((e) => e.id !== id));
+      }, 2500);
+
+      if (broadcast) {
+        sendSignal({ type: "EMOJI_REACTION", emoji });
+      }
+      setShowEmojiPicker(false);
+    },
+    [sendSignal]
+  );
+
+  // End Call Handler
+  const handleEndCall = useCallback(
+    async (reason = "NORMAL_HANGUP", broadcast = true) => {
+      if (callEnded) return;
+      setCallEnded(true);
+      if (timerRef.current) clearInterval(timerRef.current);
+
+      if (broadcast) {
+        sendSignal({ type: "CALL_ENDED" });
+      }
+
+      if (localStreamRef.current) {
+        localStreamRef.current.getTracks().forEach((track) => track.stop());
+      }
+      if (screenStreamRef.current) {
+        screenStreamRef.current.getTracks().forEach((track) => track.stop());
+      }
+
+      if (sessionId) {
+        try {
+          await fetch(`/api/calls/${sessionId}/end`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ endReason: reason }),
+          });
+        } catch (err) {
+          console.error("End call log error:", err);
+        }
+      }
+
+      if (onCallEnded) {
+        try {
+          onCallEnded();
+        } catch (_) {
+          router.push(isStudent ? "/device" : "/parent/calls");
+        }
+      } else {
+        if (isStudent) {
+          router.push("/device");
+        } else {
+          router.push("/parent/calls");
+        }
+      }
+    },
+    [callEnded, isStudent, onCallEnded, router, sendSignal, sessionId]
+  );
 
   // 1. Initialize Direct Camera & Cross-Device WebRTC Signaling
   useEffect(() => {
@@ -131,6 +222,7 @@ export default function JitsiMeetingWrapper({
           localStreamRef.current = stream;
           if (localVideoRef.current) {
             localVideoRef.current.srcObject = stream;
+            localVideoRef.current.play().catch(() => {});
           }
         }
 
@@ -150,30 +242,10 @@ export default function JitsiMeetingWrapper({
           if (event.streams && event.streams[0]) {
             if (remoteVideoRef.current) {
               remoteVideoRef.current.srcObject = event.streams[0];
+              remoteVideoRef.current.play().catch(() => {});
             }
             setHasRemoteVideo(true);
             setPeerConnected(true);
-          }
-        };
-
-        // Broadcast signal handler for both Supabase Realtime & BroadcastChannel
-        const sendSignal = (signalPayload) => {
-          const payload = { ...signalPayload, senderRole: myRole, timestamp: Date.now() };
-
-          // 1. Send via Supabase Realtime (Cross-Device: Mobile Phone <-> Tablet Kiosk <-> Laptop)
-          if (supabaseChannelRef.current) {
-            supabaseChannelRef.current.send({
-              type: "broadcast",
-              event: "webrtc_signal",
-              payload,
-            }).catch(() => {});
-          }
-
-          // 2. Send via BroadcastChannel (Same-PC cross-tab fallback)
-          if (broadcastChannelRef.current) {
-            try {
-              broadcastChannelRef.current.postMessage(payload);
-            } catch (_) {}
           }
         };
 
@@ -210,6 +282,11 @@ export default function JitsiMeetingWrapper({
               setChatMessages((prev) => [...prev, data.message]);
             } else if (data.type === "EMOJI_REACTION" && data.emoji) {
               triggerReaction(data.emoji, false);
+            } else if (data.type === "WHITEBOARD_CLEAR") {
+              const canvas = whiteboardCanvasRef.current;
+              if (canvas && whiteboardCtxRef.current) {
+                whiteboardCtxRef.current.clearRect(0, 0, canvas.width, canvas.height);
+              }
             } else if (data.type === "CALL_ENDED") {
               handleEndCall("REMOTE_HANGUP", false);
             }
@@ -276,6 +353,9 @@ export default function JitsiMeetingWrapper({
       if (localStreamRef.current) {
         localStreamRef.current.getTracks().forEach((track) => track.stop());
       }
+      if (screenStreamRef.current) {
+        screenStreamRef.current.getTracks().forEach((track) => track.stop());
+      }
       if (peerConnectionRef.current) {
         peerConnectionRef.current.close();
       }
@@ -286,7 +366,7 @@ export default function JitsiMeetingWrapper({
         broadcastChannelRef.current.close();
       }
     };
-  }, [roomIdentifier, sessionId, isStudent]);
+  }, [roomIdentifier, sessionId, isStudent, handleEndCall, sendSignal, triggerReaction, myRole]);
 
   // Supervision Warnings & Auto Hangup
   useEffect(() => {
@@ -296,108 +376,147 @@ export default function JitsiMeetingWrapper({
     if (remainingSeconds === 0 && !callEnded) {
       handleEndCall("MAX_DURATION_REACHED");
     }
-  }, [remainingSeconds, isWarningShown, callEnded]);
+  }, [remainingSeconds, isWarningShown, callEnded, handleEndCall]);
 
-  // Toggle Microphone
+  // Initialize Whiteboard Canvas Context when Whiteboard opens
+  useEffect(() => {
+    if (isWhiteboardOpen && whiteboardCanvasRef.current) {
+      const canvas = whiteboardCanvasRef.current;
+      const rect = canvas.getBoundingClientRect();
+      canvas.width = rect.width || 800;
+      canvas.height = rect.height || 500;
+      const ctx = canvas.getContext("2d");
+      if (ctx) {
+        ctx.lineCap = "round";
+        ctx.lineJoin = "round";
+        whiteboardCtxRef.current = ctx;
+      }
+    }
+  }, [isWhiteboardOpen]);
+
+  // ─── 1. TOGGLE MICROPHONE (Audio Mute) ───
   const toggleMute = () => {
     if (localStreamRef.current) {
       const audioTracks = localStreamRef.current.getAudioTracks();
+      const nextState = !isMuted;
       audioTracks.forEach((track) => {
-        track.enabled = !track.enabled;
+        track.enabled = !nextState;
       });
-      setIsMuted(!isMuted);
+      setIsMuted(nextState);
     } else {
       setIsMuted(!isMuted);
     }
   };
 
-  // Toggle Video Camera
-  const toggleVideo = () => {
-    if (localStreamRef.current) {
-      const videoTracks = localStreamRef.current.getVideoTracks();
-      videoTracks.forEach((track) => {
-        track.enabled = !track.enabled;
-      });
-      setIsVideoOff(!isVideoOff);
-    } else {
-      setIsVideoOff(!isVideoOff);
+  // ─── 2. TOGGLE VIDEO (Camera Off / On with Safe Track Recovery) ───
+  const toggleVideo = async () => {
+    try {
+      const nextState = !isVideoOff;
+      setIsVideoOff(nextState);
+
+      if (localStreamRef.current) {
+        const videoTracks = localStreamRef.current.getVideoTracks();
+        if (videoTracks.length > 0) {
+          videoTracks.forEach((track) => {
+            track.enabled = !nextState;
+          });
+        }
+
+        // If turning camera back ON, ensure srcObject is active and playing
+        if (!nextState && localVideoRef.current) {
+          localVideoRef.current.srcObject = localStreamRef.current;
+          localVideoRef.current.play().catch(() => {});
+        }
+      }
+    } catch (err) {
+      console.error("Toggle video error:", err);
     }
   };
 
-  // Toggle Screen Share
+  // ─── 3. TOGGLE SCREEN SHARING (WebRTC Sender Track Replacement) ───
   const toggleScreenShare = async () => {
     try {
       if (!isScreenSharing) {
-        const screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
+        if (!navigator.mediaDevices?.getDisplayMedia) {
+          alert("Screen sharing is not supported in this browser.");
+          return;
+        }
+
+        const screenStream = await navigator.mediaDevices.getDisplayMedia({
+          video: { cursor: "always" },
+          audio: false,
+        });
+        screenStreamRef.current = screenStream;
+
+        const screenTrack = screenStream.getVideoTracks()[0];
+
+        // 1. Update local preview
         if (localVideoRef.current) {
           localVideoRef.current.srcObject = screenStream;
+          localVideoRef.current.play().catch(() => {});
         }
-        setIsScreenSharing(true);
-        screenStream.getVideoTracks()?.[0]?.addEventListener("ended", () => {
-          if (localStreamRef.current && localVideoRef.current) {
-            localVideoRef.current.srcObject = localStreamRef.current;
+
+        // 2. Replace track on WebRTC PeerConnection sender
+        if (peerConnectionRef.current) {
+          const senders = peerConnectionRef.current.getSenders();
+          const videoSender = senders.find((s) => s.track && s.track.kind === "video");
+          if (videoSender) {
+            videoSender.replaceTrack(screenTrack);
           }
-          setIsScreenSharing(false);
-        });
-      } else {
-        if (localStreamRef.current && localVideoRef.current) {
-          localVideoRef.current.srcObject = localStreamRef.current;
         }
-        setIsScreenSharing(false);
+
+        setIsScreenSharing(true);
+
+        // Listen for browser native "Stop Sharing" button
+        screenTrack.onended = () => {
+          stopScreenShare();
+        };
+      } else {
+        stopScreenShare();
       }
-    } catch {
+    } catch (err) {
+      console.warn("Screen share cancelled or not allowed:", err);
       setIsScreenSharing(false);
     }
   };
 
-  // End Call Handler
-  const handleEndCall = async (reason = "NORMAL_HANGUP", broadcast = true) => {
-    if (callEnded) return;
-    setCallEnded(true);
-    if (timerRef.current) clearInterval(timerRef.current);
-
-    if (broadcast) {
-      const payload = { type: "CALL_ENDED", senderRole: myRole };
-      if (supabaseChannelRef.current) {
-        supabaseChannelRef.current.send({ type: "broadcast", event: "webrtc_signal", payload }).catch(() => {});
-      }
-      if (broadcastChannelRef.current) {
-        try { broadcastChannelRef.current.postMessage(payload); } catch (_) {}
-      }
+  const stopScreenShare = () => {
+    if (screenStreamRef.current) {
+      screenStreamRef.current.getTracks().forEach((t) => t.stop());
+      screenStreamRef.current = null;
     }
 
+    // Restore camera track to local video and WebRTC peer
     if (localStreamRef.current) {
-      localStreamRef.current.getTracks().forEach((track) => track.stop());
-    }
+      const cameraTrack = localStreamRef.current.getVideoTracks()[0];
 
-    if (sessionId) {
-      try {
-        await fetch(`/api/calls/${sessionId}/end`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ endReason: reason }),
-        });
-      } catch (err) {
-        console.error("End call log error:", err);
+      if (localVideoRef.current) {
+        localVideoRef.current.srcObject = localStreamRef.current;
+        localVideoRef.current.play().catch(() => {});
+      }
+
+      if (peerConnectionRef.current && cameraTrack) {
+        const senders = peerConnectionRef.current.getSenders();
+        const videoSender = senders.find((s) => s.track && s.track.kind === "video");
+        if (videoSender) {
+          videoSender.replaceTrack(cameraTrack);
+        }
       }
     }
 
-    if (onCallEnded) {
-      try {
-        onCallEnded();
-      } catch (_) {
-        router.push(isStudent ? "/device" : "/parent/calls");
-      }
+    setIsScreenSharing(false);
+  };
+
+  // ─── 4. DOUBLE CLICK / SPOTLIGHT TOGGLE ───
+  const handleToggleSpotlight = (target) => {
+    if (spotlightTile === target) {
+      setSpotlightTile(null); // Restore 50/50 split
     } else {
-      if (isStudent) {
-        router.push("/device");
-      } else {
-        router.push("/parent/calls");
-      }
+      setSpotlightTile(target); // Enlarge selected participant
     }
   };
 
-  // Send In-Call Chat Message
+  // ─── 5. SEND CHAT MESSAGE ───
   const handleSendMessage = (e) => {
     e.preventDefault();
     if (!messageInput.trim()) return;
@@ -411,47 +530,22 @@ export default function JitsiMeetingWrapper({
 
     setChatMessages((prev) => [...prev, newMsg]);
     setMessageInput("");
-
-    const payload = { type: "CHAT_MESSAGE", message: newMsg, senderRole: myRole };
-    if (supabaseChannelRef.current) {
-      supabaseChannelRef.current.send({ type: "broadcast", event: "webrtc_signal", payload }).catch(() => {});
-    }
-    if (broadcastChannelRef.current) {
-      try { broadcastChannelRef.current.postMessage(payload); } catch (_) {}
-    }
+    sendSignal({ type: "CHAT_MESSAGE", message: newMsg });
   };
 
-  // Floating Emoji Reactions
-  const triggerReaction = (emoji, broadcast = true) => {
-    const id = Date.now().toString() + Math.random();
-    setFloatingEmojis((prev) => [...prev, { id, emoji, left: Math.random() * 60 + 20 }]);
-    setTimeout(() => {
-      setFloatingEmojis((prev) => prev.filter((e) => e.id !== id));
-    }, 2500);
-
-    if (broadcast) {
-      const payload = { type: "EMOJI_REACTION", emoji, senderRole: myRole };
-      if (supabaseChannelRef.current) {
-        supabaseChannelRef.current.send({ type: "broadcast", event: "webrtc_signal", payload }).catch(() => {});
-      }
-      if (broadcastChannelRef.current) {
-        try { broadcastChannelRef.current.postMessage(payload); } catch (_) {}
-      }
-    }
-    setShowEmojiPicker(false);
-  };
-
-  // Memory Snapshot Capture
+  // ─── 6. MEMORY SNAPSHOT ───
   const handleTakeSnapshot = () => {
     setSnapshotFlash(true);
     setTimeout(() => setSnapshotFlash(false), 300);
 
-    if (localVideoRef.current) {
+    const videoSource = remoteVideoRef.current?.videoWidth ? remoteVideoRef.current : localVideoRef.current;
+
+    if (videoSource) {
       const canvas = document.createElement("canvas");
-      canvas.width = localVideoRef.current.videoWidth || 1280;
-      canvas.height = localVideoRef.current.videoHeight || 720;
+      canvas.width = videoSource.videoWidth || 1280;
+      canvas.height = videoSource.videoHeight || 720;
       const ctx = canvas.getContext("2d");
-      ctx.drawImage(localVideoRef.current, 0, 0, canvas.width, canvas.height);
+      ctx.drawImage(videoSource, 0, 0, canvas.width, canvas.height);
 
       ctx.fillStyle = "rgba(0, 167, 111, 0.9)";
       ctx.font = "bold 24px sans-serif";
@@ -467,7 +561,7 @@ export default function JitsiMeetingWrapper({
     }
   };
 
-  // Fullscreen Toggle
+  // ─── 7. FULLSCREEN TOGGLE ───
   const toggleFullscreen = () => {
     if (!document.fullscreenElement) {
       containerRef.current?.requestFullscreen?.();
@@ -478,29 +572,52 @@ export default function JitsiMeetingWrapper({
     }
   };
 
-  // Whiteboard Drawing Handlers
+  // ─── 8. WHITEBOARD DRAWING LOGIC (Mouse & Touch Safe) ───
+  const getCanvasCoords = (e) => {
+    const canvas = whiteboardCanvasRef.current;
+    if (!canvas) return { x: 0, y: 0 };
+    const rect = canvas.getBoundingClientRect();
+
+    if (e.touches && e.touches[0]) {
+      return {
+        x: e.touches[0].clientX - rect.left,
+        y: e.touches[0].clientY - rect.top,
+      };
+    }
+    return {
+      x: e.clientX - rect.left,
+      y: e.clientY - rect.top,
+    };
+  };
+
   const startDrawing = (e) => {
+    e.preventDefault();
     const canvas = whiteboardCanvasRef.current;
     if (!canvas) return;
-    const rect = canvas.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
+
+    if (!whiteboardCtxRef.current) {
+      whiteboardCtxRef.current = canvas.getContext("2d");
+    }
     const ctx = whiteboardCtxRef.current;
+    if (!ctx) return;
+
+    const { x, y } = getCanvasCoords(e);
     ctx.beginPath();
     ctx.moveTo(x, y);
     ctx.strokeStyle = isEraser ? "#202124" : drawColor;
     ctx.lineWidth = isEraser ? 24 : lineWidth;
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
     setIsDrawing(true);
   };
 
   const draw = (e) => {
     if (!isDrawing) return;
-    const canvas = whiteboardCanvasRef.current;
-    if (!canvas) return;
-    const rect = canvas.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
+    e.preventDefault();
     const ctx = whiteboardCtxRef.current;
+    if (!ctx) return;
+
+    const { x, y } = getCanvasCoords(e);
     ctx.lineTo(x, y);
     ctx.stroke();
   };
@@ -512,13 +629,21 @@ export default function JitsiMeetingWrapper({
     }
   };
 
+  const clearWhiteboard = () => {
+    const canvas = whiteboardCanvasRef.current;
+    if (canvas && whiteboardCtxRef.current) {
+      whiteboardCtxRef.current.clearRect(0, 0, canvas.width, canvas.height);
+      sendSignal({ type: "WHITEBOARD_CLEAR" });
+    }
+  };
+
   return (
     <div
       ref={containerRef}
       className="relative w-full h-full min-h-[100dvh] bg-[#202124] text-white flex flex-col font-sans select-none overflow-hidden"
     >
-      {/* Snapshot Flash */}
-      {snapshotFlash && <div className="absolute inset-0 bg-white z-50 animate-out fade-out duration-300" />}
+      {/* Snapshot Flash Overlay */}
+      {snapshotFlash && <div className="absolute inset-0 bg-white z-50 animate-out fade-out duration-300 pointer-events-none" />}
 
       {/* ─── Top Header Bar ─── */}
       <header className="h-14 sm:h-16 px-3 sm:px-6 bg-[#202124] flex items-center justify-between z-20 shrink-0 border-b border-[#3c4043]/50">
@@ -556,70 +681,127 @@ export default function JitsiMeetingWrapper({
         </div>
       </header>
 
-      {/* ─── Video Stage ─── */}
-      <main className="flex-1 w-full p-2 sm:p-4 grid grid-cols-1 md:grid-cols-2 gap-2 sm:gap-4 relative overflow-hidden">
-        {/* Tile 1: Remote Participant */}
-        <div className="relative w-full h-full min-h-[220px] rounded-2xl bg-[#3c4043] overflow-hidden flex items-center justify-center border border-[#3c4043]/60 shadow-xl">
-          <video
-            ref={remoteVideoRef}
-            autoPlay
-            playsInline
-            className={`w-full h-full object-cover ${hasRemoteVideo ? "block" : "hidden"}`}
-          />
+      {/* ─── Video Stage (Supports Split 50/50 AND Double-Click Spotlight Mode) ─── */}
+      <main className="flex-1 w-full p-2 sm:p-4 relative overflow-hidden flex items-center justify-center">
+        <div
+          className={`w-full h-full transition-all duration-300 ${
+            spotlightTile ? "relative" : "grid grid-cols-1 md:grid-cols-2 gap-2 sm:gap-4"
+          }`}
+        >
+          {/* ─── Tile 1: Remote Participant ─── */}
+          <div
+            onDoubleClick={() => handleToggleSpotlight("remote")}
+            className={`relative rounded-2xl bg-[#3c4043] overflow-hidden flex items-center justify-center border border-[#3c4043]/60 shadow-xl transition-all duration-300 cursor-pointer ${
+              spotlightTile === "remote"
+                ? "w-full h-full z-10"
+                : spotlightTile === "local"
+                ? "absolute bottom-4 right-4 w-44 sm:w-56 h-32 sm:h-40 z-20 ring-2 ring-[#00A76F] shadow-2xl rounded-2xl"
+                : "w-full h-full min-h-[220px]"
+            }`}
+            title="Double-click to Spotlight / Enlarge"
+          >
+            <video
+              ref={remoteVideoRef}
+              autoPlay
+              playsInline
+              className={`w-full h-full object-cover ${hasRemoteVideo ? "block" : "hidden"}`}
+            />
 
-          {!hasRemoteVideo && (
-            <div className="flex flex-col items-center justify-center space-y-3 p-4 sm:p-6 text-center">
-              <div className="relative">
-                <div className="w-20 h-20 sm:w-28 sm:h-28 rounded-full bg-gradient-to-br from-[#00A76F] via-[#007856] to-[#004B34] text-white flex items-center justify-center font-extrabold text-3xl sm:text-4xl shadow-2xl ring-4 ring-white/10 animate-pulse">
-                  {peerName.charAt(0)}
+            {!hasRemoteVideo && (
+              <div className="flex flex-col items-center justify-center space-y-3 p-4 sm:p-6 text-center">
+                <div className="relative">
+                  <div className="w-20 h-20 sm:w-28 sm:h-28 rounded-full bg-gradient-to-br from-[#00A76F] via-[#007856] to-[#004B34] text-white flex items-center justify-center font-extrabold text-3xl sm:text-4xl shadow-2xl ring-4 ring-white/10 animate-pulse">
+                    {peerName.charAt(0)}
+                  </div>
+                  <span className="absolute bottom-1 right-1 w-5 h-5 sm:w-6 sm:h-6 rounded-full bg-[#00A76F] border-2 border-[#202124] flex items-center justify-center">
+                    <Radio className="w-3 h-3 text-white animate-spin" />
+                  </span>
                 </div>
-                <span className="absolute bottom-1 right-1 w-5 h-5 sm:w-6 sm:h-6 rounded-full bg-[#00A76F] border-2 border-[#202124] flex items-center justify-center">
-                  <Radio className="w-3 h-3 text-white animate-spin" />
-                </span>
+                <div>
+                  <h3 className="font-bold text-base sm:text-lg text-white">{peerName}</h3>
+                  <p className="text-[11px] sm:text-xs text-[#5BE49B] flex items-center justify-center gap-1 mt-0.5">
+                    <CheckCircle2 className="w-3.5 h-3.5" /> Connecting live encrypted stream...
+                  </p>
+                </div>
               </div>
-              <div>
-                <h3 className="font-bold text-base sm:text-lg text-white">{peerName}</h3>
-                <p className="text-[11px] sm:text-xs text-[#5BE49B] flex items-center justify-center gap-1 mt-0.5">
-                  <CheckCircle2 className="w-3.5 h-3.5" /> Connecting live encrypted stream...
-                </p>
-              </div>
-            </div>
-          )}
+            )}
 
-          <div className="absolute bottom-3 left-3 px-2.5 py-1 rounded-lg bg-black/60 backdrop-blur-md text-[11px] sm:text-xs font-bold text-white flex items-center gap-1.5 border border-white/10 z-10">
-            <span>{peerName}</span>
+            {/* Tile Label & Spotlight Button */}
+            <div className="absolute bottom-3 left-3 px-2.5 py-1 rounded-lg bg-black/60 backdrop-blur-md text-[11px] sm:text-xs font-bold text-white flex items-center gap-2 border border-white/10 z-10 pointer-events-none">
+              <span>{peerName}</span>
+            </div>
+
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                handleToggleSpotlight("remote");
+              }}
+              className="absolute top-3 right-3 p-1.5 rounded-lg bg-black/60 hover:bg-black/80 backdrop-blur-md text-white/80 hover:text-white transition-all z-10 cursor-pointer"
+              title={spotlightTile === "remote" ? "Exit Spotlight" : "Spotlight Participant"}
+            >
+              {spotlightTile === "remote" ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
+            </button>
           </div>
-        </div>
 
-        {/* Tile 2: Self View Camera */}
-        <div className="relative w-full h-full min-h-[220px] rounded-2xl bg-[#3c4043] overflow-hidden flex items-center justify-center border border-[#3c4043]/60 shadow-xl">
-          {isVideoOff ? (
-            <div className="flex flex-col items-center justify-center space-y-2">
-              <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-full bg-[#5f6368] text-white flex items-center justify-center font-extrabold text-2xl sm:text-3xl">
-                {myName.charAt(0)}
+          {/* ─── Tile 2: Self View Camera ─── */}
+          <div
+            onDoubleClick={() => handleToggleSpotlight("local")}
+            className={`relative rounded-2xl bg-[#3c4043] overflow-hidden flex items-center justify-center border border-[#3c4043]/60 shadow-xl transition-all duration-300 cursor-pointer ${
+              spotlightTile === "local"
+                ? "w-full h-full z-10"
+                : spotlightTile === "remote"
+                ? "absolute bottom-4 right-4 w-44 sm:w-56 h-32 sm:h-40 z-20 ring-2 ring-[#00A76F] shadow-2xl rounded-2xl"
+                : "w-full h-full min-h-[220px]"
+            }`}
+            title="Double-click to Spotlight / Enlarge"
+          >
+            {/* Camera Off Avatar Overlay */}
+            {isVideoOff && (
+              <div className="flex flex-col items-center justify-center space-y-2 z-10">
+                <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-full bg-[#5f6368] text-white flex items-center justify-center font-extrabold text-2xl sm:text-3xl">
+                  {myName.charAt(0)}
+                </div>
+                <p className="text-[11px] text-[#9aa0a6] font-semibold">Camera is Off</p>
               </div>
-              <p className="text-[11px] text-[#9aa0a6] font-semibold">Camera is Off</p>
-            </div>
-          ) : (
+            )}
+
+            {/* Video Element is ALWAYS kept in DOM so srcObject is never lost */}
             <video
               ref={localVideoRef}
               autoPlay
               playsInline
               muted
-              className="w-full h-full object-cover mirror transform -scale-x-100"
+              className={`w-full h-full object-cover mirror transform -scale-x-100 ${
+                isVideoOff ? "hidden" : "block"
+              }`}
             />
-          )}
 
-          <div className="absolute bottom-3 left-3 px-2.5 py-1 rounded-lg bg-black/60 backdrop-blur-md text-[11px] sm:text-xs font-bold text-white flex items-center gap-2 border border-white/10 z-10">
-            <span>{myName} (You)</span>
-            {isMuted && <MicOff className="w-3 h-3 text-red-400" />}
-          </div>
-
-          {raisedHand && (
-            <div className="absolute top-3 left-3 px-2.5 py-1 rounded-full bg-amber-500 text-black font-extrabold text-[11px] flex items-center gap-1 shadow-lg animate-bounce z-10">
-              <Hand className="w-3 h-3" /> Hand Raised
+            {/* Tile Label & Spotlight Button */}
+            <div className="absolute bottom-3 left-3 px-2.5 py-1 rounded-lg bg-black/60 backdrop-blur-md text-[11px] sm:text-xs font-bold text-white flex items-center gap-2 border border-white/10 z-10 pointer-events-none">
+              <span>{myName} (You)</span>
+              {isMuted && <MicOff className="w-3 h-3 text-red-400" />}
+              {isScreenSharing && <span className="text-[10px] text-blue-400">(Sharing Screen)</span>}
             </div>
-          )}
+
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                handleToggleSpotlight("local");
+              }}
+              className="absolute top-3 right-3 p-1.5 rounded-lg bg-black/60 hover:bg-black/80 backdrop-blur-md text-white/80 hover:text-white transition-all z-10 cursor-pointer"
+              title={spotlightTile === "local" ? "Exit Spotlight" : "Spotlight Self View"}
+            >
+              {spotlightTile === "local" ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
+            </button>
+
+            {raisedHand && (
+              <div className="absolute top-3 left-3 px-2.5 py-1 rounded-full bg-amber-500 text-black font-extrabold text-[11px] flex items-center gap-1 shadow-lg animate-bounce z-10">
+                <Hand className="w-3 h-3" /> Hand Raised
+              </div>
+            )}
+          </div>
         </div>
 
         {/* 🎨 Live Whiteboard Drawer */}
@@ -635,7 +817,10 @@ export default function JitsiMeetingWrapper({
                   <button
                     key={color}
                     type="button"
-                    onClick={() => { setDrawColor(color); setIsEraser(false); }}
+                    onClick={() => {
+                      setDrawColor(color);
+                      setIsEraser(false);
+                    }}
                     style={{ backgroundColor: color }}
                     className={`w-4 h-4 sm:w-5 sm:h-5 rounded-full border-2 transition-all cursor-pointer ${
                       drawColor === color && !isEraser ? "border-white scale-125" : "border-transparent"
@@ -655,12 +840,7 @@ export default function JitsiMeetingWrapper({
 
                 <button
                   type="button"
-                  onClick={() => {
-                    const canvas = whiteboardCanvasRef.current;
-                    if (canvas && whiteboardCtxRef.current) {
-                      whiteboardCtxRef.current.clearRect(0, 0, canvas.width, canvas.height);
-                    }
-                  }}
+                  onClick={clearWhiteboard}
                   className="px-2 py-0.5 rounded text-[11px] font-bold bg-white/10 text-white hover:text-red-400 cursor-pointer"
                 >
                   Clear
@@ -683,6 +863,9 @@ export default function JitsiMeetingWrapper({
                 onMouseMove={draw}
                 onMouseUp={stopDrawing}
                 onMouseLeave={stopDrawing}
+                onTouchStart={startDrawing}
+                onTouchMove={draw}
+                onTouchEnd={stopDrawing}
                 className="w-full h-full touch-none"
               />
             </div>
@@ -699,7 +882,7 @@ export default function JitsiMeetingWrapper({
               <button
                 type="button"
                 onClick={() => setIsChatOpen(false)}
-                className="p-1 rounded-full text-[#9aa0a6] hover:text-white"
+                className="p-1 rounded-full text-[#9aa0a6] hover:text-white cursor-pointer"
               >
                 <X className="w-4 h-4" />
               </button>
@@ -756,7 +939,7 @@ export default function JitsiMeetingWrapper({
 
         {/* Control Pill Buttons */}
         <div className="flex items-center justify-center gap-2 sm:gap-3 mx-auto w-full md:w-auto max-w-full overflow-x-auto py-1">
-          {/* Mute Mic */}
+          {/* 1. Mute Mic */}
           <button
             type="button"
             onClick={toggleMute}
@@ -768,7 +951,7 @@ export default function JitsiMeetingWrapper({
             {isMuted ? <MicOff className="w-4 h-4 sm:w-5 sm:h-5" /> : <Mic className="w-4 h-4 sm:w-5 sm:h-5" />}
           </button>
 
-          {/* Turn Off Camera */}
+          {/* 2. Turn Off/On Camera */}
           <button
             type="button"
             onClick={toggleVideo}
@@ -780,7 +963,7 @@ export default function JitsiMeetingWrapper({
             {isVideoOff ? <VideoOff className="w-4 h-4 sm:w-5 sm:h-5" /> : <Video className="w-4 h-4 sm:w-5 sm:h-5" />}
           </button>
 
-          {/* Raise Hand */}
+          {/* 3. Raise Hand */}
           <button
             type="button"
             onClick={() => setRaisedHand(!raisedHand)}
@@ -792,7 +975,7 @@ export default function JitsiMeetingWrapper({
             <Hand className="w-4 h-4 sm:w-5 sm:h-5" />
           </button>
 
-          {/* Reactions */}
+          {/* 4. Reactions */}
           <div className="relative shrink-0">
             <button
               type="button"
@@ -819,7 +1002,7 @@ export default function JitsiMeetingWrapper({
             )}
           </div>
 
-          {/* Whiteboard Drawing */}
+          {/* 5. Whiteboard Drawing */}
           <button
             type="button"
             onClick={() => setIsWhiteboardOpen(!isWhiteboardOpen)}
@@ -831,7 +1014,7 @@ export default function JitsiMeetingWrapper({
             <Palette className="w-4 h-4 sm:w-5 sm:h-5" />
           </button>
 
-          {/* Snapshot Button (Hidden on very narrow mobile, in more tools) */}
+          {/* 6. Snapshot Button */}
           <button
             type="button"
             onClick={handleTakeSnapshot}
@@ -841,19 +1024,19 @@ export default function JitsiMeetingWrapper({
             <SnapshotIcon className="w-4 h-4 sm:w-5 sm:h-5 text-emerald-400" />
           </button>
 
-          {/* Screen Share (Hidden on small mobile) */}
+          {/* 7. Screen Share */}
           <button
             type="button"
             onClick={toggleScreenShare}
             className={`hidden sm:flex w-10 h-10 sm:w-12 sm:h-12 rounded-full items-center justify-center transition-all cursor-pointer shrink-0 ${
-              isScreenSharing ? "bg-[#4285F4] text-white" : "bg-[#3c4043] text-white hover:bg-[#474a4d]"
+              isScreenSharing ? "bg-[#4285F4] text-white shadow-lg shadow-blue-500/30" : "bg-[#3c4043] text-white hover:bg-[#474a4d]"
             }`}
-            title="Share Screen"
+            title={isScreenSharing ? "Stop Screen Share" : "Share Screen"}
           >
             <MonitorUp className="w-4 h-4 sm:w-5 sm:h-5" />
           </button>
 
-          {/* Chat Toggle Button */}
+          {/* 8. Chat Toggle Button */}
           <button
             type="button"
             onClick={() => setIsChatOpen(!isChatOpen)}
@@ -865,7 +1048,7 @@ export default function JitsiMeetingWrapper({
             <MessageSquare className="w-4 h-4 sm:w-5 sm:h-5" />
           </button>
 
-          {/* Red Google Meet "Leave Call" Button */}
+          {/* 9. Leave Call Button */}
           <button
             type="button"
             onClick={() => handleEndCall("NORMAL_HANGUP")}
