@@ -5,9 +5,11 @@ import { logAuditEvent } from "@/lib/services/audit.service";
 
 export async function GET(request) {
   try {
+    // Auth guard: Only SUPER_ADMIN or authenticated HOSTEL_ADMIN may access
+    const { user, profile } = await requireAuth();
     const admin = createAdminClient();
 
-    const { data: hostels, error } = await admin
+    let query = admin
       .from("hostels")
       .select(`
         *,
@@ -18,13 +20,42 @@ export async function GET(request) {
       `)
       .order("created_at", { ascending: false });
 
+    // Multi-tenant isolation: HOSTEL_ADMIN only sees their own hostel
+    if (profile.role !== "SUPER_ADMIN") {
+      const { data: member } = await admin
+        .from("hostel_members")
+        .select("hostel_id")
+        .eq("user_id", user.id)
+        .eq("is_active", true)
+        .single();
+
+      // Also check hostels where this user is admin via metadata
+      if (member?.hostel_id) {
+        query = query.eq("id", member.hostel_id);
+      } else {
+        const { data: ownedHostel } = await admin
+          .from("hostels")
+          .select("id")
+          .eq("metadata->>admin_email", user.email)
+          .single();
+
+        if (ownedHostel?.id) {
+          query = query.eq("id", ownedHostel.id);
+        } else {
+          return NextResponse.json({ success: true, data: [] });
+        }
+      }
+    }
+
+    const { data: hostels, error } = await query;
+
     if (error) {
       return NextResponse.json({ success: false, error: { message: error.message } }, { status: 500 });
     }
 
     return NextResponse.json({ success: true, data: hostels });
   } catch (err) {
-    return NextResponse.json({ success: false, error: { message: err.message } }, { status: 500 });
+    return NextResponse.json({ success: false, error: { message: err.message } }, { status: err.status || 500 });
   }
 }
 
