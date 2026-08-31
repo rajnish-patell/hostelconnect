@@ -515,7 +515,7 @@ export default function AdminStudentsPage() {
                   </span>
                 </div>
 
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div className="space-y-1">
                     <label className="text-[11px] font-bold text-[#1C252E] dark:text-white">Parent Full Name *</label>
                     <input
@@ -541,7 +541,7 @@ export default function AdminStudentsPage() {
                   </div>
                 </div>
 
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div className="space-y-1">
                     <label className="text-[11px] font-bold text-[#1C252E] dark:text-white">Parent Mobile Number *</label>
                     <input

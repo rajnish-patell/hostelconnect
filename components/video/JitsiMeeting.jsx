@@ -31,15 +31,19 @@ import {
   Settings,
   Smile,
   CheckCircle2,
+  Radio,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { formatDuration } from "@/lib/utils";
+import { createClient } from "@/lib/supabase/client";
 
 const ICE_SERVERS = {
   iceServers: [
     { urls: "stun:stun.l.google.com:19302" },
     { urls: "stun:stun1.l.google.com:19302" },
     { urls: "stun:stun2.l.google.com:19302" },
+    { urls: "stun:stun3.l.google.com:19302" },
+    { urls: "stun:stun4.l.google.com:19302" },
   ],
 };
 
@@ -65,9 +69,11 @@ export default function JitsiMeetingWrapper({
   const [raisedHand, setRaisedHand] = useState(false);
   const [snapshotFlash, setSnapshotFlash] = useState(false);
   const [hasRemoteVideo, setHasRemoteVideo] = useState(false);
+  const [peerConnected, setPeerConnected] = useState(false);
 
-  // In-Call Live Chat Drawer
+  // In-Call Live Chat Drawer & More Tools Menu
   const [isChatOpen, setIsChatOpen] = useState(false);
+  const [isMoreToolsOpen, setIsMoreToolsOpen] = useState(false);
   const [chatMessages, setChatMessages] = useState([
     {
       id: "1",
@@ -78,7 +84,7 @@ export default function JitsiMeetingWrapper({
   ]);
   const [messageInput, setMessageInput] = useState("");
 
-  // 🎨 Advanced Feature: Google Meet Style Whiteboard / Canvas
+  // Whiteboard / Drawing Drawer
   const [isWhiteboardOpen, setIsWhiteboardOpen] = useState(false);
   const [drawColor, setDrawColor] = useState("#00A76F");
   const [lineWidth, setLineWidth] = useState(4);
@@ -99,6 +105,7 @@ export default function JitsiMeetingWrapper({
   const localStreamRef = useRef(null);
   const peerConnectionRef = useRef(null);
   const broadcastChannelRef = useRef(null);
+  const supabaseChannelRef = useRef(null);
   const chatScrollRef = useRef(null);
 
   const maxSeconds = maxDurationMinutes * 60;
@@ -106,10 +113,12 @@ export default function JitsiMeetingWrapper({
   const myName = isStudent ? studentName : parentName;
   const peerName = isStudent ? parentName : studentName;
   const myRole = isStudent ? "STUDENT" : "PARENT";
+  const roomIdentifier = meetingId || sessionId || "safe-room";
 
-  // 1. Initialize Direct Camera & WebRTC Peer Connection
+  // 1. Initialize Direct Camera & Cross-Device WebRTC Signaling
   useEffect(() => {
     let isCleanedUp = false;
+    const supabase = createClient();
 
     async function setupWebRTC() {
       try {
@@ -125,75 +134,126 @@ export default function JitsiMeetingWrapper({
           }
         }
 
-        // Initialize RTCPeerConnection
-        if (typeof window !== "undefined" && window.RTCPeerConnection) {
-          const pc = new RTCPeerConnection(ICE_SERVERS);
-          peerConnectionRef.current = pc;
+        if (typeof window === "undefined" || !window.RTCPeerConnection) return;
 
-          // Add local tracks to peer connection
-          if (stream) {
-            stream.getTracks().forEach((track) => {
-              pc.addTrack(track, stream);
-            });
-          }
+        const pc = new RTCPeerConnection(ICE_SERVERS);
+        peerConnectionRef.current = pc;
 
-          // Handle incoming remote tracks
-          pc.ontrack = (event) => {
-            if (remoteVideoRef.current && event.streams[0]) {
+        if (stream) {
+          stream.getTracks().forEach((track) => {
+            pc.addTrack(track, stream);
+          });
+        }
+
+        // Handle incoming remote audio/video tracks
+        pc.ontrack = (event) => {
+          if (event.streams && event.streams[0]) {
+            if (remoteVideoRef.current) {
               remoteVideoRef.current.srcObject = event.streams[0];
-              setHasRemoteVideo(true);
             }
-          };
+            setHasRemoteVideo(true);
+            setPeerConnected(true);
+          }
+        };
 
-          // Setup Signaling BroadcastChannel
-          const channelName = `hct_meet_${meetingId || sessionId || "safe-room"}`;
-          const bc = new BroadcastChannel(channelName);
-          broadcastChannelRef.current = bc;
+        // Broadcast signal handler for both Supabase Realtime & BroadcastChannel
+        const sendSignal = (signalPayload) => {
+          const payload = { ...signalPayload, senderRole: myRole, timestamp: Date.now() };
 
-          pc.onicecandidate = (event) => {
-            if (event.candidate) {
-              bc.postMessage({ type: "ICE_CANDIDATE", candidate: event.candidate, senderRole: myRole });
-            }
-          };
-
-          // Student acts as caller by default, Parent acts as answerer
-          if (isStudent) {
-            const offer = await pc.createOffer();
-            await pc.setLocalDescription(offer);
-            bc.postMessage({ type: "SDP_OFFER", sdp: offer, senderRole: myRole });
-          } else {
-            bc.postMessage({ type: "PEER_READY", senderRole: myRole });
+          // 1. Send via Supabase Realtime (Cross-Device: Mobile Phone <-> Tablet Kiosk <-> Laptop)
+          if (supabaseChannelRef.current) {
+            supabaseChannelRef.current.send({
+              type: "broadcast",
+              event: "webrtc_signal",
+              payload,
+            }).catch(() => {});
           }
 
-          bc.onmessage = async (event) => {
-            const data = event.data;
-            if (!data || data.senderRole === myRole || isCleanedUp) return;
-
+          // 2. Send via BroadcastChannel (Same-PC cross-tab fallback)
+          if (broadcastChannelRef.current) {
             try {
-              if (data.type === "PEER_READY" && isStudent) {
+              broadcastChannelRef.current.postMessage(payload);
+            } catch (_) {}
+          }
+        };
+
+        pc.onicecandidate = (event) => {
+          if (event.candidate) {
+            sendSignal({ type: "ICE_CANDIDATE", candidate: event.candidate });
+          }
+        };
+
+        // Process incoming signaling messages
+        const handleIncomingSignal = async (data) => {
+          if (!data || data.senderRole === myRole || isCleanedUp) return;
+
+          try {
+            if (data.type === "PEER_JOINED") {
+              setPeerConnected(true);
+              if (isStudent) {
                 const offer = await pc.createOffer();
                 await pc.setLocalDescription(offer);
-                bc.postMessage({ type: "SDP_OFFER", sdp: offer, senderRole: myRole });
-              } else if (data.type === "SDP_OFFER" && !isStudent) {
-                await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
-                const answer = await pc.createAnswer();
-                await pc.setLocalDescription(answer);
-                bc.postMessage({ type: "SDP_ANSWER", sdp: answer, senderRole: myRole });
-              } else if (data.type === "SDP_ANSWER" && isStudent) {
-                await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
-              } else if (data.type === "ICE_CANDIDATE") {
-                await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
-              } else if (data.type === "CHAT_MESSAGE") {
-                setChatMessages((prev) => [...prev, data.message]);
-              } else if (data.type === "EMOJI_REACTION") {
-                triggerReaction(data.emoji, false);
-              } else if (data.type === "CALL_ENDED") {
-                handleEndCall("REMOTE_HANGUP", false);
+                sendSignal({ type: "SDP_OFFER", sdp: offer });
               }
-            } catch (sigErr) {
-              console.warn("WebRTC Signaling event error:", sigErr);
+            } else if (data.type === "SDP_OFFER" && !isStudent) {
+              await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
+              const answer = await pc.createAnswer();
+              await pc.setLocalDescription(answer);
+              sendSignal({ type: "SDP_ANSWER", sdp: answer });
+              setPeerConnected(true);
+            } else if (data.type === "SDP_ANSWER" && isStudent) {
+              await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
+              setPeerConnected(true);
+            } else if (data.type === "ICE_CANDIDATE" && data.candidate) {
+              await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
+            } else if (data.type === "CHAT_MESSAGE" && data.message) {
+              setChatMessages((prev) => [...prev, data.message]);
+            } else if (data.type === "EMOJI_REACTION" && data.emoji) {
+              triggerReaction(data.emoji, false);
+            } else if (data.type === "CALL_ENDED") {
+              handleEndCall("REMOTE_HANGUP", false);
             }
-          };
+          } catch (err) {
+            console.warn("[Signaling Note]:", err.message);
+          }
+        };
+
+        // 1. Setup Supabase Realtime Channel
+        const sbChannel = supabase.channel(`call_room_${roomIdentifier}`, {
+          config: { broadcast: { self: false } },
+        });
+
+        sbChannel
+          .on("broadcast", { event: "webrtc_signal" }, ({ payload }) => {
+            handleIncomingSignal(payload);
+          })
+          .subscribe((status) => {
+            if (status === "SUBSCRIBED") {
+              sendSignal({ type: "PEER_JOINED" });
+            }
+          });
+
+        supabaseChannelRef.current = sbChannel;
+
+        // 2. Setup BroadcastChannel Fallback
+        if ("BroadcastChannel" in window) {
+          const bc = new BroadcastChannel(`hct_call_${roomIdentifier}`);
+          broadcastChannelRef.current = bc;
+          bc.onmessage = (event) => handleIncomingSignal(event.data);
+          sendSignal({ type: "PEER_JOINED" });
+        }
+
+        // Student creates initial offer
+        if (isStudent) {
+          setTimeout(async () => {
+            if (!isCleanedUp && pc.signalingState !== "closed") {
+              try {
+                const offer = await pc.createOffer();
+                await pc.setLocalDescription(offer);
+                sendSignal({ type: "SDP_OFFER", sdp: offer });
+              } catch (_) {}
+            }
+          }, 600);
         }
       } catch (err) {
         console.warn("Camera/Mic access note:", err.message);
@@ -219,11 +279,14 @@ export default function JitsiMeetingWrapper({
       if (peerConnectionRef.current) {
         peerConnectionRef.current.close();
       }
+      if (supabaseChannelRef.current) {
+        supabase.removeChannel(supabaseChannelRef.current);
+      }
       if (broadcastChannelRef.current) {
         broadcastChannelRef.current.close();
       }
     };
-  }, [meetingId, sessionId, isStudent]);
+  }, [roomIdentifier, sessionId, isStudent]);
 
   // Supervision Warnings & Auto Hangup
   useEffect(() => {
@@ -293,8 +356,14 @@ export default function JitsiMeetingWrapper({
     setCallEnded(true);
     if (timerRef.current) clearInterval(timerRef.current);
 
-    if (broadcast && broadcastChannelRef.current) {
-      broadcastChannelRef.current.postMessage({ type: "CALL_ENDED", senderRole: myRole });
+    if (broadcast) {
+      const payload = { type: "CALL_ENDED", senderRole: myRole };
+      if (supabaseChannelRef.current) {
+        supabaseChannelRef.current.send({ type: "broadcast", event: "webrtc_signal", payload }).catch(() => {});
+      }
+      if (broadcastChannelRef.current) {
+        try { broadcastChannelRef.current.postMessage(payload); } catch (_) {}
+      }
     }
 
     if (localStreamRef.current) {
@@ -335,8 +404,12 @@ export default function JitsiMeetingWrapper({
     setChatMessages((prev) => [...prev, newMsg]);
     setMessageInput("");
 
+    const payload = { type: "CHAT_MESSAGE", message: newMsg, senderRole: myRole };
+    if (supabaseChannelRef.current) {
+      supabaseChannelRef.current.send({ type: "broadcast", event: "webrtc_signal", payload }).catch(() => {});
+    }
     if (broadcastChannelRef.current) {
-      broadcastChannelRef.current.postMessage({ type: "CHAT_MESSAGE", message: newMsg, senderRole: myRole });
+      try { broadcastChannelRef.current.postMessage(payload); } catch (_) {}
     }
   };
 
@@ -348,8 +421,14 @@ export default function JitsiMeetingWrapper({
       setFloatingEmojis((prev) => prev.filter((e) => e.id !== id));
     }, 2500);
 
-    if (broadcast && broadcastChannelRef.current) {
-      broadcastChannelRef.current.postMessage({ type: "EMOJI_REACTION", emoji, senderRole: myRole });
+    if (broadcast) {
+      const payload = { type: "EMOJI_REACTION", emoji, senderRole: myRole };
+      if (supabaseChannelRef.current) {
+        supabaseChannelRef.current.send({ type: "broadcast", event: "webrtc_signal", payload }).catch(() => {});
+      }
+      if (broadcastChannelRef.current) {
+        try { broadcastChannelRef.current.postMessage(payload); } catch (_) {}
+      }
     }
     setShowEmojiPicker(false);
   };
@@ -368,19 +447,19 @@ export default function JitsiMeetingWrapper({
 
       ctx.fillStyle = "rgba(0, 167, 111, 0.9)";
       ctx.font = "bold 24px sans-serif";
-      ctx.fillText(`HostelConnect Moment: ${studentName} & ${parentName}`, 30, canvas.height - 40);
+      ctx.fillText(`HostelConnect: ${studentName} ↔ ${parentName}`, 30, canvas.height - 40);
       ctx.fillStyle = "#ffffff";
       ctx.font = "16px sans-serif";
       ctx.fillText(new Date().toLocaleDateString("en-IN", { dateStyle: "full" }), 30, canvas.height - 15);
 
       const link = document.createElement("a");
-      link.download = `HostelConnect_Moment_${studentName}_${Date.now()}.png`;
+      link.download = `HostelConnect_${studentName}_${Date.now()}.png`;
       link.href = canvas.toDataURL("image/png");
       link.click();
     }
   };
 
-  // Fullscreen
+  // Fullscreen Toggle
   const toggleFullscreen = () => {
     if (!document.fullscreenElement) {
       containerRef.current?.requestFullscreen?.();
@@ -391,7 +470,7 @@ export default function JitsiMeetingWrapper({
     }
   };
 
-  // Drawing Handlers
+  // Whiteboard Drawing Handlers
   const startDrawing = (e) => {
     const canvas = whiteboardCanvasRef.current;
     if (!canvas) return;
@@ -428,53 +507,51 @@ export default function JitsiMeetingWrapper({
   return (
     <div
       ref={containerRef}
-      className="relative w-full h-full bg-[#202124] text-white flex flex-col font-sans select-none overflow-hidden"
+      className="relative w-full h-full min-h-[100dvh] bg-[#202124] text-white flex flex-col font-sans select-none overflow-hidden"
     >
-      {/* Snapshot Flash Overlay */}
+      {/* Snapshot Flash */}
       {snapshotFlash && <div className="absolute inset-0 bg-white z-50 animate-out fade-out duration-300" />}
 
-      {/* ─── Top Google Meet Header ─── */}
-      <div className="h-14 sm:h-16 px-4 sm:px-6 bg-[#202124] flex items-center justify-between z-20 shrink-0 border-b border-[#3c4043]/40">
-        <div className="flex items-center gap-3">
-          <div className="flex items-center gap-2">
-            <span className="w-3 h-3 rounded-full bg-[#00A76F] animate-pulse" />
-            <h1 className="font-bold text-sm sm:text-base text-white tracking-tight">
-              {studentName} ↔ {parentName}
-            </h1>
-          </div>
-          <span className="hidden md:inline-block text-xs text-[#9aa0a6] px-2.5 py-0.5 rounded-full bg-[#3c4043]/50">
-            {meetingId || "meet.google.com/hct-safe"}
+      {/* ─── Top Header Bar ─── */}
+      <header className="h-14 sm:h-16 px-3 sm:px-6 bg-[#202124] flex items-center justify-between z-20 shrink-0 border-b border-[#3c4043]/50">
+        <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+          <span className="w-2.5 h-2.5 sm:w-3 sm:h-3 rounded-full bg-[#00A76F] animate-pulse shrink-0" />
+          <h1 className="font-bold text-xs sm:text-base text-white truncate max-w-[160px] sm:max-w-[320px]">
+            {studentName} ↔ {parentName}
+          </h1>
+          <span className="hidden lg:inline-flex text-[11px] text-[#9aa0a6] px-2.5 py-0.5 rounded-full bg-[#3c4043]/50 font-mono">
+            {meetingId || "meet.google.com/safe"}
           </span>
         </div>
 
-        {/* Supervised Hostel Timer Badge */}
-        <div className="flex items-center gap-3">
+        {/* Timer & Supervised Indicator */}
+        <div className="flex items-center gap-2 sm:gap-3 shrink-0">
           <div
-            className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-xs sm:text-sm font-mono font-bold border transition-all ${
+            className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-1 rounded-full text-xs font-mono font-bold border transition-all ${
               remainingSeconds <= 120
                 ? "bg-red-500/20 text-red-400 border-red-500/40 animate-pulse"
                 : "bg-[#303134] text-white border-[#3c4043]"
             }`}
           >
-            <Clock className="w-4 h-4 text-[#00A76F]" />
+            <Clock className="w-3.5 h-3.5 text-[#00A76F]" />
             <span>{formatDuration(remainingSeconds)}</span>
           </div>
 
           <button
             type="button"
             onClick={toggleFullscreen}
-            className="p-2 rounded-full hover:bg-[#3c4043] text-[#9aa0a6] hover:text-white transition-colors cursor-pointer"
+            className="p-1.5 sm:p-2 rounded-full hover:bg-[#3c4043] text-[#9aa0a6] hover:text-white transition-colors cursor-pointer"
             title="Toggle Fullscreen"
           >
             {isFullscreen ? <Minimize className="w-4 h-4" /> : <Maximize className="w-4 h-4" />}
           </button>
         </div>
-      </div>
+      </header>
 
-      {/* ─── Main Google Meet Video Stage ─── */}
-      <div className="flex-1 w-full h-full p-2 sm:p-4 grid grid-cols-1 md:grid-cols-2 gap-3 relative overflow-hidden">
-        {/* Tile 1: Remote Participant (Mom/Dad or Student) */}
-        <div className="relative w-full h-full rounded-2xl bg-[#3c4043] overflow-hidden flex items-center justify-center border border-[#3c4043]/60 shadow-xl group">
+      {/* ─── Video Stage ─── */}
+      <main className="flex-1 w-full p-2 sm:p-4 grid grid-cols-1 md:grid-cols-2 gap-2 sm:gap-4 relative overflow-hidden">
+        {/* Tile 1: Remote Participant */}
+        <div className="relative w-full h-full min-h-[220px] rounded-2xl bg-[#3c4043] overflow-hidden flex items-center justify-center border border-[#3c4043]/60 shadow-xl">
           <video
             ref={remoteVideoRef}
             autoPlay
@@ -483,38 +560,37 @@ export default function JitsiMeetingWrapper({
           />
 
           {!hasRemoteVideo && (
-            <div className="flex flex-col items-center justify-center space-y-3 p-6 text-center">
+            <div className="flex flex-col items-center justify-center space-y-3 p-4 sm:p-6 text-center">
               <div className="relative">
-                <div className="w-24 h-24 sm:w-32 sm:h-32 rounded-full bg-gradient-to-br from-[#00A76F] via-[#007856] to-[#004B34] text-white flex items-center justify-center font-extrabold text-4xl sm:text-5xl shadow-2xl ring-4 ring-white/10 animate-pulse">
+                <div className="w-20 h-20 sm:w-28 sm:h-28 rounded-full bg-gradient-to-br from-[#00A76F] via-[#007856] to-[#004B34] text-white flex items-center justify-center font-extrabold text-3xl sm:text-4xl shadow-2xl ring-4 ring-white/10 animate-pulse">
                   {peerName.charAt(0)}
                 </div>
-                <span className="absolute bottom-1 right-1 w-6 h-6 rounded-full bg-[#00A76F] border-2 border-[#202124] flex items-center justify-center">
-                  <Mic className="w-3 h-3 text-white" />
+                <span className="absolute bottom-1 right-1 w-5 h-5 sm:w-6 sm:h-6 rounded-full bg-[#00A76F] border-2 border-[#202124] flex items-center justify-center">
+                  <Radio className="w-3 h-3 text-white animate-spin" />
                 </span>
               </div>
               <div>
-                <h3 className="font-bold text-lg sm:text-xl text-white">{peerName}</h3>
-                <p className="text-xs text-[#5BE49B] flex items-center justify-center gap-1 mt-0.5">
-                  <CheckCircle2 className="w-3.5 h-3.5" /> Live Encrypted Room Connected
+                <h3 className="font-bold text-base sm:text-lg text-white">{peerName}</h3>
+                <p className="text-[11px] sm:text-xs text-[#5BE49B] flex items-center justify-center gap-1 mt-0.5">
+                  <CheckCircle2 className="w-3.5 h-3.5" /> Connecting live encrypted stream...
                 </p>
               </div>
             </div>
           )}
 
-          {/* Bottom Left Name Badge */}
-          <div className="absolute bottom-3 left-3 px-3 py-1 rounded-lg bg-black/60 backdrop-blur-md text-xs font-bold text-white flex items-center gap-1.5 border border-white/10 z-10">
+          <div className="absolute bottom-3 left-3 px-2.5 py-1 rounded-lg bg-black/60 backdrop-blur-md text-[11px] sm:text-xs font-bold text-white flex items-center gap-1.5 border border-white/10 z-10">
             <span>{peerName}</span>
           </div>
         </div>
 
-        {/* Tile 2: Self View (Camera Stream) */}
-        <div className="relative w-full h-full rounded-2xl bg-[#3c4043] overflow-hidden flex items-center justify-center border border-[#3c4043]/60 shadow-xl">
+        {/* Tile 2: Self View Camera */}
+        <div className="relative w-full h-full min-h-[220px] rounded-2xl bg-[#3c4043] overflow-hidden flex items-center justify-center border border-[#3c4043]/60 shadow-xl">
           {isVideoOff ? (
-            <div className="flex flex-col items-center justify-center space-y-3">
-              <div className="w-20 h-20 rounded-full bg-[#5f6368] text-white flex items-center justify-center font-extrabold text-3xl">
+            <div className="flex flex-col items-center justify-center space-y-2">
+              <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-full bg-[#5f6368] text-white flex items-center justify-center font-extrabold text-2xl sm:text-3xl">
                 {myName.charAt(0)}
               </div>
-              <p className="text-xs text-[#9aa0a6] font-semibold">Your Camera is Off</p>
+              <p className="text-[11px] text-[#9aa0a6] font-semibold">Camera is Off</p>
             </div>
           ) : (
             <video
@@ -526,36 +602,34 @@ export default function JitsiMeetingWrapper({
             />
           )}
 
-          {/* Bottom Left Name Badge */}
-          <div className="absolute bottom-3 left-3 px-3 py-1 rounded-lg bg-black/60 backdrop-blur-md text-xs font-bold text-white flex items-center gap-2 border border-white/10 z-10">
+          <div className="absolute bottom-3 left-3 px-2.5 py-1 rounded-lg bg-black/60 backdrop-blur-md text-[11px] sm:text-xs font-bold text-white flex items-center gap-2 border border-white/10 z-10">
             <span>{myName} (You)</span>
-            {isMuted && <MicOff className="w-3.5 h-3.5 text-red-400" />}
+            {isMuted && <MicOff className="w-3 h-3 text-red-400" />}
           </div>
 
-          {/* Raised Hand Indicator */}
           {raisedHand && (
-            <div className="absolute top-3 left-3 px-3 py-1.5 rounded-full bg-amber-500 text-black font-extrabold text-xs flex items-center gap-1.5 shadow-lg animate-bounce z-10">
-              <Hand className="w-3.5 h-3.5" /> Hand Raised
+            <div className="absolute top-3 left-3 px-2.5 py-1 rounded-full bg-amber-500 text-black font-extrabold text-[11px] flex items-center gap-1 shadow-lg animate-bounce z-10">
+              <Hand className="w-3 h-3" /> Hand Raised
             </div>
           )}
         </div>
 
-        {/* 🎨 Live Whiteboard / Drawing Drawer Overlay */}
+        {/* 🎨 Live Whiteboard Drawer */}
         {isWhiteboardOpen && (
-          <div className="absolute inset-2 sm:inset-4 bg-[#202124]/95 backdrop-blur-xl rounded-3xl z-40 flex flex-col border border-white/10 shadow-2xl animate-in zoom-in-95 duration-200">
-            <div className="h-14 px-4 sm:px-6 bg-black/40 border-b border-white/10 flex items-center justify-between shrink-0 rounded-t-3xl">
+          <div className="absolute inset-2 sm:inset-4 bg-[#202124]/95 backdrop-blur-xl rounded-2xl sm:rounded-3xl z-40 flex flex-col border border-white/10 shadow-2xl">
+            <div className="h-12 sm:h-14 px-3 sm:px-6 bg-black/40 border-b border-white/10 flex items-center justify-between shrink-0 rounded-t-2xl sm:rounded-t-3xl">
               <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
-                <span className="text-xs font-extrabold text-white flex items-center gap-1.5">
-                  <Palette className="w-4 h-4 text-[#00A76F]" /> Collaborative Whiteboard
+                <span className="text-xs font-bold text-white flex items-center gap-1">
+                  <Palette className="w-4 h-4 text-[#00A76F]" /> Whiteboard
                 </span>
 
-                {["#00A76F", "#EA4335", "#FBBC04", "#4285F4", "#A142F4", "#FFFFFF"].map((color) => (
+                {["#00A76F", "#EA4335", "#FBBC04", "#4285F4", "#FFFFFF"].map((color) => (
                   <button
                     key={color}
                     type="button"
                     onClick={() => { setDrawColor(color); setIsEraser(false); }}
                     style={{ backgroundColor: color }}
-                    className={`w-5 h-5 rounded-full border-2 transition-all cursor-pointer ${
+                    className={`w-4 h-4 sm:w-5 sm:h-5 rounded-full border-2 transition-all cursor-pointer ${
                       drawColor === color && !isEraser ? "border-white scale-125" : "border-transparent"
                     }`}
                   />
@@ -563,9 +637,9 @@ export default function JitsiMeetingWrapper({
 
                 <button
                   type="button"
-                  onClick={() => setIsEraser(true)}
-                  className={`px-2.5 py-1 rounded-lg text-xs font-bold flex items-center gap-1 cursor-pointer ${
-                    isEraser ? "bg-[#00A76F] text-white" : "bg-white/10 text-white hover:bg-white/20"
+                  onClick={() => setIsEraser(!isEraser)}
+                  className={`px-2 py-0.5 rounded text-[11px] font-bold flex items-center gap-1 cursor-pointer ${
+                    isEraser ? "bg-[#00A76F] text-white" : "bg-white/10 text-white"
                   }`}
                 >
                   <Eraser className="w-3 h-3" /> Eraser
@@ -579,16 +653,16 @@ export default function JitsiMeetingWrapper({
                       whiteboardCtxRef.current.clearRect(0, 0, canvas.width, canvas.height);
                     }
                   }}
-                  className="px-2.5 py-1 rounded-lg text-xs font-bold bg-white/10 text-white hover:bg-red-500/20 hover:text-red-400 cursor-pointer flex items-center gap-1"
+                  className="px-2 py-0.5 rounded text-[11px] font-bold bg-white/10 text-white hover:text-red-400 cursor-pointer"
                 >
-                  <Trash2 className="w-3 h-3" /> Clear
+                  Clear
                 </button>
               </div>
 
               <button
                 type="button"
                 onClick={() => setIsWhiteboardOpen(false)}
-                className="p-1.5 rounded-full bg-white/10 text-white hover:bg-white/20 cursor-pointer"
+                className="p-1 rounded-full bg-white/10 text-white hover:bg-white/20 cursor-pointer"
               >
                 <X className="w-4 h-4" />
               </button>
@@ -607,27 +681,26 @@ export default function JitsiMeetingWrapper({
           </div>
         )}
 
-        {/* 💬 Google Meet In-Call Chat Drawer */}
+        {/* 💬 In-Call Chat Drawer */}
         {isChatOpen && (
-          <div className="absolute right-2 sm:right-4 top-2 sm:top-4 bottom-2 sm:bottom-4 w-80 sm:w-96 bg-[#202124] border border-[#3c4043] rounded-3xl z-40 flex flex-col shadow-2xl animate-in slide-in-from-right-10 duration-200">
-            <div className="h-14 px-5 border-b border-[#3c4043] flex items-center justify-between shrink-0">
-              <h3 className="font-bold text-sm text-white flex items-center gap-2">
-                <MessageSquare className="w-4 h-4 text-[#00A76F]" /> In-Call Messages
+          <div className="absolute right-2 sm:right-4 top-2 sm:top-4 bottom-2 sm:bottom-4 w-72 sm:w-80 max-w-[90vw] bg-[#202124] border border-[#3c4043] rounded-2xl z-40 flex flex-col shadow-2xl">
+            <div className="h-12 px-4 border-b border-[#3c4043] flex items-center justify-between shrink-0">
+              <h3 className="font-bold text-xs text-white flex items-center gap-1.5">
+                <MessageSquare className="w-3.5 h-3.5 text-[#00A76F]" /> Messages
               </h3>
               <button
                 type="button"
                 onClick={() => setIsChatOpen(false)}
-                className="p-1.5 rounded-full text-[#9aa0a6] hover:text-white hover:bg-[#3c4043] cursor-pointer"
+                className="p-1 rounded-full text-[#9aa0a6] hover:text-white"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
 
-            {/* Chat History */}
-            <div ref={chatScrollRef} className="flex-1 p-4 overflow-y-auto space-y-3">
+            <div ref={chatScrollRef} className="flex-1 p-3 overflow-y-auto space-y-2">
               {chatMessages.map((msg) => (
-                <div key={msg.id} className="p-3 rounded-2xl bg-[#303134] space-y-1">
-                  <div className="flex items-center justify-between text-[11px] text-[#9aa0a6]">
+                <div key={msg.id} className="p-2.5 rounded-xl bg-[#303134] space-y-0.5">
+                  <div className="flex items-center justify-between text-[10px] text-[#9aa0a6]">
                     <span className="font-bold text-white">{msg.sender}</span>
                     <span>{msg.time}</span>
                   </div>
@@ -636,20 +709,19 @@ export default function JitsiMeetingWrapper({
               ))}
             </div>
 
-            {/* Chat Input */}
-            <form onSubmit={handleSendMessage} className="p-3 border-t border-[#3c4043] flex items-center gap-2">
+            <form onSubmit={handleSendMessage} className="p-2.5 border-t border-[#3c4043] flex items-center gap-1.5">
               <input
                 type="text"
                 value={messageInput}
                 onChange={(e) => setMessageInput(e.target.value)}
-                placeholder="Send a message..."
-                className="flex-1 h-10 px-3.5 rounded-xl bg-[#303134] text-xs text-white placeholder:text-[#9aa0a6] focus:outline-none focus:ring-1 focus:ring-[#00A76F]"
+                placeholder="Message..."
+                className="flex-1 h-9 px-3 rounded-lg bg-[#303134] text-xs text-white placeholder:text-[#9aa0a6] focus:outline-none focus:ring-1 focus:ring-[#00A76F]"
               />
               <button
                 type="submit"
-                className="w-10 h-10 rounded-xl bg-[#00A76F] hover:bg-[#007856] text-white flex items-center justify-center cursor-pointer transition-all active:scale-95 shrink-0"
+                className="w-9 h-9 rounded-lg bg-[#00A76F] hover:bg-[#007856] text-white flex items-center justify-center cursor-pointer transition-all shrink-0"
               >
-                <Send className="w-4 h-4" />
+                <Send className="w-3.5 h-3.5" />
               </button>
             </form>
           </div>
@@ -660,112 +732,77 @@ export default function JitsiMeetingWrapper({
           <div
             key={item.id}
             style={{ left: `${item.left}%` }}
-            className="absolute bottom-20 text-5xl pointer-events-none animate-bounce duration-1000 z-50 select-none"
+            className="absolute bottom-24 text-4xl pointer-events-none animate-bounce duration-1000 z-50 select-none"
           >
             {item.emoji}
           </div>
         ))}
-      </div>
+      </main>
 
-      {/* ─── Bottom Google Meet Control Pill Bar ─── */}
-      <div className="h-20 sm:h-22 bg-[#202124] px-4 sm:px-8 flex items-center justify-between z-30 shrink-0 border-t border-[#3c4043]/40">
-        {/* Left Info */}
-        <div className="hidden sm:flex items-center gap-2 text-xs text-[#9aa0a6]">
+      {/* ─── Bottom Responsive Control Bar ─── */}
+      <footer className="h-18 sm:h-22 bg-[#202124] px-3 sm:px-8 flex items-center justify-between z-30 shrink-0 border-t border-[#3c4043]/50">
+        <div className="hidden md:flex items-center gap-2 text-xs text-[#9aa0a6]">
           <ShieldCheck className="w-4 h-4 text-[#00A76F]" />
-          <span>Hostel Supervised Calling</span>
+          <span>Supervised Call</span>
         </div>
 
-        {/* Center Control Buttons (Google Meet Style) */}
-        <div className="flex items-center gap-2 sm:gap-3 mx-auto sm:mx-0">
+        {/* Control Pill Buttons */}
+        <div className="flex items-center justify-center gap-2 sm:gap-3 mx-auto w-full md:w-auto max-w-full overflow-x-auto py-1">
           {/* Mute Mic */}
           <button
             type="button"
             onClick={toggleMute}
-            className={`w-11 h-11 sm:w-12 sm:h-12 rounded-full flex items-center justify-center transition-all cursor-pointer ${
-              isMuted
-                ? "bg-[#ea4335] text-white hover:bg-[#d93025]"
-                : "bg-[#3c4043] text-white hover:bg-[#474a4d]"
+            className={`w-10 h-10 sm:w-12 sm:h-12 rounded-full flex items-center justify-center transition-all cursor-pointer shrink-0 ${
+              isMuted ? "bg-[#ea4335] text-white hover:bg-[#d93025]" : "bg-[#3c4043] text-white hover:bg-[#474a4d]"
             }`}
             title={isMuted ? "Unmute Mic" : "Mute Mic"}
           >
-            {isMuted ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
+            {isMuted ? <MicOff className="w-4 h-4 sm:w-5 sm:h-5" /> : <Mic className="w-4 h-4 sm:w-5 sm:h-5" />}
           </button>
 
           {/* Turn Off Camera */}
           <button
             type="button"
             onClick={toggleVideo}
-            className={`w-11 h-11 sm:w-12 sm:h-12 rounded-full flex items-center justify-center transition-all cursor-pointer ${
-              isVideoOff
-                ? "bg-[#ea4335] text-white hover:bg-[#d93025]"
-                : "bg-[#3c4043] text-white hover:bg-[#474a4d]"
+            className={`w-10 h-10 sm:w-12 sm:h-12 rounded-full flex items-center justify-center transition-all cursor-pointer shrink-0 ${
+              isVideoOff ? "bg-[#ea4335] text-white hover:bg-[#d93025]" : "bg-[#3c4043] text-white hover:bg-[#474a4d]"
             }`}
-            title={isVideoOff ? "Turn Video On" : "Turn Video Off"}
+            title={isVideoOff ? "Turn Camera On" : "Turn Camera Off"}
           >
-            {isVideoOff ? <VideoOff className="w-5 h-5" /> : <Video className="w-5 h-5" />}
+            {isVideoOff ? <VideoOff className="w-4 h-4 sm:w-5 sm:h-5" /> : <Video className="w-4 h-4 sm:w-5 sm:h-5" />}
           </button>
 
           {/* Raise Hand */}
           <button
             type="button"
             onClick={() => setRaisedHand(!raisedHand)}
-            className={`w-11 h-11 sm:w-12 sm:h-12 rounded-full flex items-center justify-center transition-all cursor-pointer ${
-              raisedHand
-                ? "bg-[#FBBC04] text-black hover:bg-amber-400"
-                : "bg-[#3c4043] text-white hover:bg-[#474a4d]"
+            className={`w-10 h-10 sm:w-12 sm:h-12 rounded-full flex items-center justify-center transition-all cursor-pointer shrink-0 ${
+              raisedHand ? "bg-[#FBBC04] text-black" : "bg-[#3c4043] text-white hover:bg-[#474a4d]"
             }`}
             title="Raise Hand"
           >
-            <Hand className="w-5 h-5" />
+            <Hand className="w-4 h-4 sm:w-5 sm:h-5" />
           </button>
 
-          {/* Live Whiteboard Drawing */}
-          <button
-            type="button"
-            onClick={() => setIsWhiteboardOpen(!isWhiteboardOpen)}
-            className={`w-11 h-11 sm:w-12 sm:h-12 rounded-full flex items-center justify-center transition-all cursor-pointer ${
-              isWhiteboardOpen
-                ? "bg-[#00A76F] text-white hover:bg-[#007856]"
-                : "bg-[#3c4043] text-white hover:bg-[#474a4d]"
-            }`}
-            title="Open Collaborative Whiteboard"
-          >
-            <Palette className="w-5 h-5" />
-          </button>
-
-          {/* Screen Share */}
-          <button
-            type="button"
-            onClick={toggleScreenShare}
-            className={`w-11 h-11 sm:w-12 sm:h-12 rounded-full flex items-center justify-center transition-all cursor-pointer ${
-              isScreenSharing
-                ? "bg-[#4285F4] text-white hover:bg-blue-600"
-                : "bg-[#3c4043] text-white hover:bg-[#474a4d]"
-            }`}
-            title="Share Screen"
-          >
-            <MonitorUp className="w-5 h-5" />
-          </button>
-
-          {/* Emoji Reactions */}
-          <div className="relative">
+          {/* Reactions */}
+          <div className="relative shrink-0">
             <button
               type="button"
               onClick={() => setShowEmojiPicker(!showEmojiPicker)}
-              className="w-11 h-11 sm:w-12 sm:h-12 rounded-full bg-[#3c4043] hover:bg-[#474a4d] text-white flex items-center justify-center transition-all cursor-pointer"
+              className="w-10 h-10 sm:w-12 sm:h-12 rounded-full bg-[#3c4043] hover:bg-[#474a4d] text-white flex items-center justify-center transition-all cursor-pointer"
               title="Reactions"
             >
-              <Smile className="w-5 h-5" />
+              <Smile className="w-4 h-4 sm:w-5 sm:h-5" />
             </button>
 
             {showEmojiPicker && (
-              <div className="absolute bottom-16 left-1/2 -translate-x-1/2 p-2 bg-[#202124] border border-[#3c4043] rounded-2xl shadow-2xl flex items-center gap-1.5 z-50 animate-in zoom-in-95">
-                {["❤️", "👍", "🎉", "🔥", "🌟", "👏", "😊"].map((emoji) => (
+              <div className="absolute bottom-14 sm:bottom-16 left-1/2 -translate-x-1/2 p-2 bg-[#202124] border border-[#3c4043] rounded-2xl shadow-2xl flex items-center gap-1 z-50">
+                {["❤️", "👍", "🎉", "🔥", "🌟", "👏"].map((emoji) => (
                   <button
                     key={emoji}
                     type="button"
                     onClick={() => triggerReaction(emoji)}
-                    className="w-9 h-9 rounded-xl hover:bg-[#3c4043] text-xl flex items-center justify-center transition-transform hover:scale-125 cursor-pointer"
+                    className="w-8 h-8 rounded-lg hover:bg-[#3c4043] text-lg flex items-center justify-center transition-transform hover:scale-125 cursor-pointer"
                   >
                     {emoji}
                   </button>
@@ -774,42 +811,68 @@ export default function JitsiMeetingWrapper({
             )}
           </div>
 
-          {/* Snapshot Button */}
+          {/* Whiteboard Drawing */}
+          <button
+            type="button"
+            onClick={() => setIsWhiteboardOpen(!isWhiteboardOpen)}
+            className={`w-10 h-10 sm:w-12 sm:h-12 rounded-full flex items-center justify-center transition-all cursor-pointer shrink-0 ${
+              isWhiteboardOpen ? "bg-[#00A76F] text-white" : "bg-[#3c4043] text-white hover:bg-[#474a4d]"
+            }`}
+            title="Whiteboard"
+          >
+            <Palette className="w-4 h-4 sm:w-5 sm:h-5" />
+          </button>
+
+          {/* Snapshot Button (Hidden on very narrow mobile, in more tools) */}
           <button
             type="button"
             onClick={handleTakeSnapshot}
-            className="w-11 h-11 sm:w-12 sm:h-12 rounded-full bg-[#3c4043] hover:bg-[#474a4d] text-white flex items-center justify-center transition-all cursor-pointer"
-            title="Take Memory Photo"
+            className="hidden sm:flex w-10 h-10 sm:w-12 sm:h-12 rounded-full bg-[#3c4043] hover:bg-[#474a4d] text-white items-center justify-center transition-all cursor-pointer shrink-0"
+            title="Snapshot"
           >
-            <SnapshotIcon className="w-5 h-5 text-emerald-400" />
+            <SnapshotIcon className="w-4 h-4 sm:w-5 sm:h-5 text-emerald-400" />
           </button>
 
-          {/* Red Google Meet Pill "Leave Call" Button */}
+          {/* Screen Share (Hidden on small mobile) */}
           <button
             type="button"
-            onClick={() => handleEndCall("NORMAL_HANGUP")}
-            className="h-11 sm:h-12 px-5 sm:px-6 rounded-full bg-[#ea4335] hover:bg-[#d93025] text-white font-extrabold text-xs sm:text-sm flex items-center gap-2 shadow-lg shadow-red-500/30 transition-all cursor-pointer active:scale-95"
-            title="Leave Call"
+            onClick={toggleScreenShare}
+            className={`hidden sm:flex w-10 h-10 sm:w-12 sm:h-12 rounded-full items-center justify-center transition-all cursor-pointer shrink-0 ${
+              isScreenSharing ? "bg-[#4285F4] text-white" : "bg-[#3c4043] text-white hover:bg-[#474a4d]"
+            }`}
+            title="Share Screen"
           >
-            <PhoneOff className="w-5 h-5" />
-            <span className="hidden sm:inline">Leave Call</span>
+            <MonitorUp className="w-4 h-4 sm:w-5 sm:h-5" />
           </button>
-        </div>
 
-        {/* Right Chat Toggle */}
-        <div className="hidden sm:flex items-center gap-2">
+          {/* Chat Toggle Button */}
           <button
             type="button"
             onClick={() => setIsChatOpen(!isChatOpen)}
-            className={`w-11 h-11 rounded-full flex items-center justify-center transition-all cursor-pointer ${
+            className={`w-10 h-10 sm:w-12 sm:h-12 rounded-full flex items-center justify-center transition-all cursor-pointer shrink-0 ${
               isChatOpen ? "bg-[#00A76F] text-white" : "bg-[#3c4043] text-white hover:bg-[#474a4d]"
             }`}
-            title="In-Call Chat"
+            title="Chat Messages"
           >
-            <MessageSquare className="w-5 h-5" />
+            <MessageSquare className="w-4 h-4 sm:w-5 sm:h-5" />
+          </button>
+
+          {/* Red Google Meet "Leave Call" Button */}
+          <button
+            type="button"
+            onClick={() => handleEndCall("NORMAL_HANGUP")}
+            className="h-10 sm:h-12 px-4 sm:px-6 rounded-full bg-[#ea4335] hover:bg-[#d93025] text-white font-extrabold text-xs sm:text-sm flex items-center gap-1.5 sm:gap-2 shadow-lg shadow-red-500/30 transition-all cursor-pointer active:scale-95 shrink-0"
+            title="Leave Call"
+          >
+            <PhoneOff className="w-4 h-4 sm:w-5 sm:h-5" />
+            <span className="hidden xs:inline sm:inline">Leave</span>
           </button>
         </div>
-      </div>
+
+        <div className="hidden md:flex items-center gap-2">
+          <span className="text-[11px] text-[#9aa0a6]">{isStudent ? "Hostel Kiosk" : "Parent App"}</span>
+        </div>
+      </footer>
     </div>
   );
 }
