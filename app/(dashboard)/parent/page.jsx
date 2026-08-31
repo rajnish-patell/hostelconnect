@@ -23,6 +23,21 @@ import StatusBadge from "@/components/common/StatusBadge";
 import LoadingState from "@/components/common/LoadingState";
 import { formatDuration } from "@/lib/utils";
 
+// Deterministic Date Formatter (Immune to SSR/Client Locale Hydration Mismatches)
+function formatDateSafe(dateStr) {
+  if (!dateStr) return "-";
+  try {
+    const d = new Date(dateStr);
+    if (isNaN(d.getTime())) return "-";
+    const day = String(d.getDate()).padStart(2, "0");
+    const month = String(d.getMonth() + 1).padStart(2, "0");
+    const year = d.getFullYear();
+    return `${day}/${month}/${year}`;
+  } catch {
+    return "-";
+  }
+}
+
 export default function ParentDashboardPage() {
   const [parentData, setParentData] = useState(null);
   const [recentCalls, setRecentCalls] = useState([]);
@@ -36,29 +51,40 @@ export default function ParentDashboardPage() {
   const [successMsg, setSuccessMsg] = useState(null);
 
   useEffect(() => {
+    let isMounted = true;
+
     async function loadData() {
       try {
-        const [pRes, cRes] = await Promise.all([
+        const [pRes, cRes] = await Promise.allSettled([
           fetch("/api/parents"),
           fetch("/api/calls?limit=5"),
         ]);
 
-        if (pRes.ok && pRes.headers.get("content-type")?.includes("application/json")) {
-          const pJson = await pRes.json();
-          if (pJson.success) setParentData(pJson.data);
+        if (pRes.status === "fulfilled" && pRes.value.ok) {
+          const pJson = await pRes.value.json();
+          if (isMounted && pJson.success && pJson.data) {
+            setParentData(pJson.data);
+          }
         }
 
-        if (cRes.ok && cRes.headers.get("content-type")?.includes("application/json")) {
-          const cJson = await cRes.json();
-          if (cJson.success) setRecentCalls(cJson.data || []);
+        if (cRes.status === "fulfilled" && cRes.value.ok) {
+          const cJson = await cRes.value.json();
+          if (isMounted && cJson.success && Array.isArray(cJson.data)) {
+            setRecentCalls(cJson.data);
+          }
         }
       } catch (err) {
-        console.error("Parent load error:", err);
+        console.error("[Parent Dashboard Data Load Error]:", err);
       } finally {
-        setLoading(false);
+        if (isMounted) setLoading(false);
       }
     }
+
     loadData();
+
+    return () => {
+      isMounted = false;
+    };
   }, []);
 
   const handleParentRecharge = async (e) => {
@@ -85,14 +111,14 @@ export default function ParentDashboardPage() {
       if (parentData?.student_guardians) {
         setParentData({
           ...parentData,
-          student_guardians: parentData.student_guardians.map(g => {
+          student_guardians: parentData.student_guardians.map((g) => {
             if (g.student?.id === selectedStudentForRecharge.id) {
               const prev = g.student.metadata?.balance_paise || 5000;
               return {
                 ...g,
                 student: {
                   ...g.student,
-                  metadata: { ...g.student.metadata, balance_paise: prev + (rechargeAmount * 100) },
+                  metadata: { ...g.student.metadata, balance_paise: prev + rechargeAmount * 100 },
                 },
               };
             }
@@ -113,7 +139,9 @@ export default function ParentDashboardPage() {
     return <LoadingState message="Loading your parent portal..." />;
   }
 
-  const linkedGuardians = parentData?.student_guardians || [];
+  const linkedGuardians = Array.isArray(parentData?.student_guardians)
+    ? parentData.student_guardians.filter((g) => Boolean(g?.student))
+    : [];
 
   return (
     <div className="space-y-6">
@@ -135,7 +163,7 @@ export default function ParentDashboardPage() {
             </p>
           </div>
           <Link href="/parent/book">
-            <Button className="bg-white text-[#007856] hover:bg-white/90 font-bold text-xs rounded-xl shadow-md gap-1.5 h-10 px-4">
+            <Button className="bg-white text-[#007856] hover:bg-white/90 font-bold text-xs rounded-xl shadow-md gap-1.5 h-10 px-4 cursor-pointer">
               <Calendar className="w-4 h-4" /> Book Time Slot
             </Button>
           </Link>
@@ -158,7 +186,10 @@ export default function ParentDashboardPage() {
               My Connected Children ({linkedGuardians.length})
             </h2>
             <p className="text-xs text-[#919EAB] mt-0.5">
-              Automatically linked with registered mobile: <span className="font-mono font-bold text-[#00A76F]">{parentData?.phone || "8349655888"}</span>
+              Automatically linked with registered mobile:{" "}
+              <span className="font-mono font-bold text-[#00A76F]">
+                {parentData?.phone || "8349655888"}
+              </span>
             </p>
           </div>
         </div>
@@ -178,7 +209,7 @@ export default function ParentDashboardPage() {
             {linkedGuardians.map((g) => {
               const student = g.student;
               const balancePaise = student?.metadata?.balance_paise || 5000;
-              const isUnlimited = student?.metadata?.unlimited_calls;
+              const isUnlimited = Boolean(student?.metadata?.unlimited_calls || student?.unlimited_calls);
 
               return (
                 <div
@@ -188,14 +219,14 @@ export default function ParentDashboardPage() {
                   <div className="flex items-start justify-between">
                     <div className="flex items-center gap-3">
                       <div className="w-12 h-12 rounded-full bg-gradient-to-br from-[#00A76F] to-[#007856] text-white flex items-center justify-center font-bold text-lg flex-shrink-0">
-                        {student?.first_name?.charAt(0)}
+                        {student?.first_name?.charAt(0) || "S"}
                       </div>
                       <div>
                         <h3 className="font-bold text-base text-[#1C252E] dark:text-white">
-                          {student?.first_name} {student?.last_name || ""}
+                          {student?.first_name || "Student"} {student?.last_name || ""}
                         </h3>
                         <p className="text-xs text-[#919EAB]">
-                          Student ID: <span className="font-mono font-bold text-[#00A76F]">{student?.admission_number}</span>
+                          Student ID: <span className="font-mono font-bold text-[#00A76F]">{student?.admission_number || "-"}</span>
                         </p>
                         <p className="text-[11px] text-[#919EAB]">
                           {student?.class_grade ? `${student.class_grade} • ${student.section || "A"}` : "Dormitory Resident"}
@@ -227,7 +258,10 @@ export default function ParentDashboardPage() {
                   {/* Actions: Schedule Call & Recharge Wallet */}
                   <div className="grid grid-cols-2 gap-2 pt-1">
                     <Button
-                      onClick={() => { setSelectedStudentForRecharge(student); setShowRechargeModal(true); }}
+                      onClick={() => {
+                        setSelectedStudentForRecharge(student);
+                        setShowRechargeModal(true);
+                      }}
                       variant="outline"
                       className="text-xs font-bold rounded-xl h-10 border-[#00A76F]/30 text-[#00A76F] hover:bg-[#00A76F]/10 gap-1.5 cursor-pointer"
                     >
@@ -254,7 +288,7 @@ export default function ParentDashboardPage() {
             <p className="text-xs text-[#919EAB] mt-0.5">Logs of incoming and supervised video calls</p>
           </div>
           <Link href="/parent/calls">
-            <Button variant="ghost" size="sm" className="text-xs font-bold text-[#00A76F] hover:text-[#007856] hover:bg-[#00A76F]/8 gap-1 rounded-lg">
+            <Button variant="ghost" size="sm" className="text-xs font-bold text-[#00A76F] hover:text-[#007856] hover:bg-[#00A76F]/8 gap-1 rounded-lg cursor-pointer">
               View All <ArrowRight className="w-3.5 h-3.5" />
             </Button>
           </Link>
@@ -289,23 +323,23 @@ export default function ParentDashboardPage() {
                           {call.student?.first_name?.charAt(0) || "S"}
                         </div>
                         <span className="text-sm font-semibold text-[#1C252E] dark:text-white">
-                          {call.student?.first_name} {call.student?.last_name || ""}
+                          {call.student?.first_name || "Student"} {call.student?.last_name || ""}
                         </span>
                       </div>
                     </td>
                     <td className="px-6 py-4">
-                      <StatusBadge status={call.status} />
+                      <StatusBadge status={call.status || "COMPLETED"} />
                     </td>
                     <td className="px-6 py-4 text-sm font-mono font-medium text-[#1C252E] dark:text-white">
-                      {formatDuration(call.duration_seconds)}
+                      {formatDuration(call.duration_seconds || 0)}
                     </td>
-                    <td className="px-6 py-4 text-sm text-[#919EAB]">
-                      {new Date(call.created_at).toLocaleDateString("en-IN")}
+                    <td className="px-6 py-4 text-sm text-[#919EAB]" suppressHydrationWarning>
+                      {formatDateSafe(call.created_at)}
                     </td>
                     <td className="px-6 py-4 text-right">
                       {call.status === "READY" || call.status === "IN_PROGRESS" ? (
                         <Link href={`/call/${call.id}`}>
-                          <Button size="sm" className="bg-[#00A76F] hover:bg-[#007856] text-white text-xs font-bold rounded-lg h-8 px-3 shadow-[0_8px_16px_rgba(0,167,111,0.24)]">
+                          <Button size="sm" className="bg-[#00A76F] hover:bg-[#007856] text-white text-xs font-bold rounded-lg h-8 px-3 shadow-[0_8px_16px_rgba(0,167,111,0.24)] cursor-pointer">
                             Join Call
                           </Button>
                         </Link>
@@ -333,7 +367,7 @@ export default function ParentDashboardPage() {
               <button
                 type="button"
                 onClick={() => setShowRechargeModal(false)}
-                className="p-2 rounded-xl text-[#919EAB] hover:text-[#1C252E] dark:hover:text-white"
+                className="p-2 rounded-xl text-[#919EAB] hover:text-[#1C252E] dark:hover:text-white cursor-pointer"
               >
                 <X className="w-5 h-5" />
               </button>
@@ -388,14 +422,14 @@ export default function ParentDashboardPage() {
                   type="button"
                   variant="outline"
                   onClick={() => setShowRechargeModal(false)}
-                  className="rounded-xl font-bold text-xs"
+                  className="rounded-xl font-bold text-xs cursor-pointer"
                 >
                   Cancel
                 </Button>
                 <Button
                   type="submit"
                   disabled={recharging}
-                  className="bg-[#00A76F] hover:bg-[#007856] text-white rounded-xl font-bold text-xs shadow-lg shadow-[#00A76F]/25"
+                  className="bg-[#00A76F] hover:bg-[#007856] text-white rounded-xl font-bold text-xs shadow-lg shadow-[#00A76F]/25 cursor-pointer"
                 >
                   {recharging ? "Connecting..." : `Pay ₹${rechargeAmount} via Razorpay`}
                 </Button>
