@@ -148,22 +148,22 @@ function LoginForm() {
         throw new Error("Access Denied: This account is not a School Administrator.");
       }
 
-      setSuccessMsg("Signed in successfully!");
+      setSuccessMsg("Signed in successfully! Launching portal...");
 
       setTimeout(() => {
+        let dest = "/parent";
         if (redirectTo && redirectTo !== "/" && !redirectTo.includes("/login")) {
-          router.push(redirectTo);
+          dest = redirectTo;
         } else if (userRole === "SUPER_ADMIN") {
-          router.push("/super-admin");
+          dest = "/super-admin";
         } else if (userRole === "HOSTEL_ADMIN") {
-          router.push("/admin");
+          dest = "/admin";
         } else if (userRole === "WARDEN" || userRole === "STAFF") {
-          router.push("/staff");
-        } else {
-          router.push("/parent");
+          dest = "/staff";
         }
-        router.refresh();
-      }, 400);
+
+        window.location.href = dest;
+      }, 300);
     } catch (err) {
       setErrorMsg(err.message || "Invalid credentials.");
     } finally {

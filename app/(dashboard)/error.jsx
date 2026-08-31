@@ -6,6 +6,15 @@ import { AlertCircle, RefreshCw, LogIn } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 export default function ErrorBoundary({ error, reset }) {
+  // Never intercept internal Next.js redirects
+  if (
+    error?.message === "NEXT_REDIRECT" ||
+    error?.digest?.startsWith("NEXT_REDIRECT") ||
+    error?.message?.includes("NEXT_REDIRECT")
+  ) {
+    throw error;
+  }
+
   useEffect(() => {
     console.error("[Dashboard Error Boundary Caught]:", error);
   }, [error]);
@@ -25,12 +34,12 @@ export default function ErrorBoundary({ error, reset }) {
         <Button
           onClick={() => reset()}
           variant="outline"
-          className="rounded-xl font-bold text-xs h-11 px-5 gap-2"
+          className="rounded-xl font-bold text-xs h-11 px-5 gap-2 cursor-pointer"
         >
           <RefreshCw className="w-4 h-4" /> Try Again
         </Button>
         <Link href="/login">
-          <Button className="bg-[#00A76F] hover:bg-[#007856] text-white rounded-xl font-bold text-xs h-11 px-5 gap-2 shadow-md shadow-[#00A76F]/20">
+          <Button className="bg-[#00A76F] hover:bg-[#007856] text-white rounded-xl font-bold text-xs h-11 px-5 gap-2 shadow-md shadow-[#00A76F]/20 cursor-pointer">
             <LogIn className="w-4 h-4" /> Go to Login
           </Button>
         </Link>
