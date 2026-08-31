@@ -128,7 +128,17 @@ export default function Header({ user, profile, onOpenSidebar }) {
           <Menu className="w-5 h-5" />
         </button>
 
-        {/* 🔍 Interactive Global Search Button (Opens ⌘K Palette) */}
+        {/* 🔍 Mobile Search Icon Button */}
+        <button
+          type="button"
+          onClick={() => setIsSearchOpen(true)}
+          className="sm:hidden p-2 rounded-xl border border-[#E5E8EB] dark:border-[#2E3844] bg-white dark:bg-[#212B36] text-[#637381] hover:text-[#00A76F] shadow-xs cursor-pointer flex items-center justify-center"
+          title="Search"
+        >
+          <Search className="w-4 h-4 text-[#00A76F]" />
+        </button>
+
+        {/* 🔍 Desktop Interactive Global Search Button (Opens ⌘K Palette) */}
         <button
           type="button"
           onClick={() => setIsSearchOpen(true)}
