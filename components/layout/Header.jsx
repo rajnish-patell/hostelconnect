@@ -95,21 +95,25 @@ export default function Header({ user, profile, onOpenSidebar }) {
   // Filter Quick Search Items
   const cleanQ = searchQuery.toLowerCase().trim();
 
-  const filteredStudents = searchData.students.filter((s) => {
-    if (!cleanQ) return false;
-    const name = `${s.first_name || ""} ${s.last_name || ""}`.toLowerCase();
-    const adm = (s.admission_number || "").toLowerCase();
-    const parentPhone = s.guardians?.map(g => g.parent?.phone || "").join(" ") || "";
-    return name.includes(cleanQ) || adm.includes(cleanQ) || parentPhone.includes(cleanQ);
-  });
+  const filteredStudents = Array.isArray(searchData?.students)
+    ? searchData.students.filter((s) => {
+        if (!cleanQ) return false;
+        const name = `${s.first_name || ""} ${s.last_name || ""}`.toLowerCase();
+        const adm = (s.admission_number || "").toLowerCase();
+        const parentPhone = s.guardians?.map((g) => g.parent?.phone || "").join(" ") || "";
+        return name.includes(cleanQ) || adm.includes(cleanQ) || parentPhone.includes(cleanQ);
+      })
+    : [];
 
-  const filteredHostels = searchData.hostels.filter((h) => {
-    if (!cleanQ) return false;
-    const name = (h.name || "").toLowerCase();
-    const code = (h.code || "").toLowerCase();
-    const city = (h.metadata?.city || h.address?.city || "").toLowerCase();
-    return name.includes(cleanQ) || code.includes(cleanQ) || city.includes(cleanQ);
-  });
+  const filteredHostels = Array.isArray(searchData?.hostels)
+    ? searchData.hostels.filter((h) => {
+        if (!cleanQ) return false;
+        const name = (h.name || "").toLowerCase();
+        const code = (h.code || "").toLowerCase();
+        const city = (h.metadata?.city || h.address?.city || "").toLowerCase();
+        return name.includes(cleanQ) || code.includes(cleanQ) || city.includes(cleanQ);
+      })
+    : [];
 
   const filteredLinks = quickLinks.filter((link) => {
     if (!cleanQ) return true;
