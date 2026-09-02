@@ -24,7 +24,13 @@ export async function middleware(request) {
               request,
             });
             cookiesToSet.forEach(({ name, value, options }) =>
-              supabaseResponse.cookies.set(name, value, options)
+              supabaseResponse.cookies.set(name, value, {
+                ...options,
+                path: "/",
+                sameSite: "lax",
+                secure: process.env.NODE_ENV === "production",
+                maxAge: options?.maxAge || 60 * 60 * 24 * 30, // 30-day session
+              })
             );
           },
         },
@@ -37,6 +43,15 @@ export async function middleware(request) {
 
     const url = request.nextUrl.clone();
     const path = url.pathname;
+
+    // Helper: Forward all updated session cookies on any redirect so session is never dropped
+    const createRedirect = (targetUrl) => {
+      const redirectResponse = NextResponse.redirect(targetUrl);
+      supabaseResponse.cookies.getAll().forEach((cookie) => {
+        redirectResponse.cookies.set(cookie.name, cookie.value, cookie);
+      });
+      return redirectResponse;
+    };
 
     // Public paths that do not require user session
     const isPublicPath =
@@ -70,11 +85,11 @@ export async function middleware(request) {
       );
     }
 
-    // 2. Protected Page paths: redirect unauthenticated users to login
+    // 2. Protected Page paths: redirect unauthenticated users to login with preserved cookies
     if (!user && !isPublicPath) {
       url.pathname = "/login";
       url.searchParams.set("redirectTo", path);
-      return NextResponse.redirect(url);
+      return createRedirect(url);
     }
 
     // 3. Strict Role-Based Access Control (RBAC) Guard for authenticated users
@@ -85,7 +100,7 @@ export async function middleware(request) {
       if (role === "PARENT") {
         if (path.startsWith("/admin") || path.startsWith("/super-admin") || path.startsWith("/staff")) {
           url.pathname = "/parent";
-          return NextResponse.redirect(url);
+          return createRedirect(url);
         }
       }
 
@@ -93,7 +108,7 @@ export async function middleware(request) {
       if (role === "HOSTEL_ADMIN") {
         if (path.startsWith("/super-admin")) {
           url.pathname = "/admin";
-          return NextResponse.redirect(url);
+          return createRedirect(url);
         }
       }
 
@@ -108,7 +123,7 @@ export async function middleware(request) {
         } else {
           url.pathname = "/parent";
         }
-        return NextResponse.redirect(url);
+        return createRedirect(url);
       }
     }
 
@@ -118,6 +133,9 @@ export async function middleware(request) {
     return NextResponse.next();
   }
 }
+
+// Support Next.js 16 proxy convention
+export const proxy = middleware;
 
 export const config = {
   matcher: [

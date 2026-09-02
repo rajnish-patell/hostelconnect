@@ -3,6 +3,7 @@ import Script from "next/script";
 import "./globals.css";
 import { BRAND } from "@/lib/constants/brand";
 import { ThemeProvider } from "@/components/providers/ThemeProvider";
+import { SessionProvider } from "@/components/providers/SessionProvider";
 
 const publicSans = Public_Sans({
   subsets: ["latin"],
@@ -82,7 +83,9 @@ export default function RootLayout({ children }) {
       </head>
       <body className="min-h-screen bg-[#FFFFFF] dark:bg-[#141A21] text-[#1C252E] dark:text-[#FFFFFF] antialiased selection:bg-[#00A76F]/20 selection:text-[#00A76F] transition-colors duration-200">
         <ThemeProvider>
-          {children}
+          <SessionProvider>
+            {children}
+          </SessionProvider>
         </ThemeProvider>
       </body>
     </html>
