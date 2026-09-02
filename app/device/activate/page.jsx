@@ -120,11 +120,26 @@ export default function DeviceActivationPage() {
 
         {/* Card Container */}
         <div className="bg-white dark:bg-[#212B36] rounded-3xl border border-[#E5E8EB] dark:border-[#2E3844] shadow-xl p-6 sm:p-8 space-y-6">
-          {/* Info Pill */}
-          <div className="flex items-start gap-3 p-4 rounded-xl bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 text-xs font-medium text-blue-700 dark:text-blue-400">
-            <KeyRound className="w-4 h-4 shrink-0 mt-0.5" />
-            <span>
-              Enter the 6-12 character activation code provided by your school administrator to activate this kiosk.
+          {/* Direct Calling Announcement */}
+          <div className="p-4 rounded-2xl bg-[#EAFBF1] dark:bg-[#00A76F]/20 border border-[#00A76F]/30 text-xs text-[#007856] dark:text-[#5BE49B] space-y-3">
+            <div className="flex items-center gap-2 font-bold text-sm">
+              <CheckCircle2 className="w-5 h-5 text-[#00A76F]" />
+              <span>Activation Code Removed!</span>
+            </div>
+            <p className="leading-relaxed">
+              Kiosks no longer require device activation codes. Any student can now simply enter their <strong>Student ID</strong> and <strong>4-digit PIN</strong> to call their parents.
+            </p>
+            <Link href="/device" className="block">
+              <Button className="w-full h-11 bg-[#00A76F] hover:bg-[#007856] text-white font-bold text-xs rounded-xl shadow-md shadow-[#00A76F]/25 cursor-pointer">
+                Launch Calling Terminal Now 🚀
+              </Button>
+            </Link>
+          </div>
+
+          {/* Optional Legacy Activation Code */}
+          <div className="text-center pt-2">
+            <span className="text-[11px] text-[#919EAB] font-bold uppercase tracking-wider">
+              — Or Enter Optional Kiosk Hardware Code —
             </span>
           </div>
 

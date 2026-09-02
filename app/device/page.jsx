@@ -28,6 +28,8 @@ import {
   Unlock,
   Delete,
   HelpCircle,
+  Building,
+  GraduationCap,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import JitsiMeetingWrapper from "@/components/video/JitsiMeeting";
@@ -38,13 +40,20 @@ export default function DeviceKioskPage() {
   const router = useRouter();
   const [deviceInfo, setDeviceInfo] = useState(null);
   const [students, setStudents] = useState([]);
+  const [tenants, setTenants] = useState([]);
+  const [selectedHostelId, setSelectedHostelId] = useState(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedStudent, setSelectedStudent] = useState(null);
   const [selectedParent, setSelectedParent] = useState(null);
   const [loading, setLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState(null);
 
-  // ─── Child-Friendly PIN Authentication State ───
+  // Fast direct Student ID + PIN authentication
+  const [quickStudentId, setQuickStudentId] = useState("");
+  const [quickPin, setQuickPin] = useState("");
+  const [quickLoggingIn, setQuickLoggingIn] = useState(false);
+
+  // Child-Friendly PIN Authentication State (Directory Click)
   const [pinModalStudent, setPinModalStudent] = useState(null);
   const [enteredPin, setEnteredPin] = useState("");
   const [pinError, setPinError] = useState(null);
@@ -54,41 +63,24 @@ export default function DeviceKioskPage() {
   const [activeCallSession, setActiveCallSession] = useState(null);
   const [callCompletedMessage, setCallCompletedMessage] = useState(null);
 
-  // Load Kiosk Directory directly on mount
-  const fetchDirectory = async () => {
+  // Load Kiosk Directory for selected school/tenant
+  const fetchDirectory = async (forceHostelId = null) => {
     setLoading(true);
     setErrorMsg(null);
     try {
-      // ─── SECURITY: Get device session token from storage ───
-      const deviceSessionToken = localStorage.getItem("hc_device_session_token");
-      
-      if (!deviceSessionToken) {
-        // Redirect to activation page
-        router.push("/device/activate");
-        return;
-      }
+      const activeHId = forceHostelId || selectedHostelId || localStorage.getItem("hc_selected_hostel_id") || "";
+      const url = activeHId ? `/api/devices/directory?hostelId=${activeHId}` : "/api/devices/directory";
+      const res = await fetch(url);
+      const json = await res.json();
 
-      const res = await fetch("/api/devices/directory", {
-        headers: {
-          Authorization: `Bearer ${deviceSessionToken}`,
-        },
-      });
-
-      let json = null;
-      if (res.headers.get("content-type")?.includes("application/json")) {
-        json = await res.json();
-      }
-
-      // Handle 401 Unauthorized - device session expired
-      if (res.status === 401) {
-        localStorage.removeItem("hc_device_session_token");
-        router.push("/device/activate?reason=session-expired");
-        return;
-      }
-
-      if (json?.success && json?.data) {
-        setStudents(json.data);
-        setDeviceInfo(json.device || { name: "Campus Video Terminal 1" });
+      if (json?.success) {
+        setStudents(json.data || []);
+        setTenants(json.tenants || []);
+        if (json.currentHostelId) {
+          setSelectedHostelId(json.currentHostelId);
+          localStorage.setItem("hc_selected_hostel_id", json.currentHostelId);
+        }
+        setDeviceInfo(json.device || { name: "Campus Video Terminal" });
       } else {
         throw new Error(json?.error?.message || "Failed to load student directory");
       }
@@ -100,45 +92,114 @@ export default function DeviceKioskPage() {
     }
   };
 
+  const handleTenantChange = (hId) => {
+    setSelectedHostelId(hId);
+    localStorage.setItem("hc_selected_hostel_id", hId);
+    fetchDirectory(hId);
+  };
+
+  // Quick Direct Student ID + PIN Login
+  const handleQuickStudentLogin = async (e) => {
+    e?.preventDefault();
+    if (!quickStudentId.trim()) return;
+    setQuickLoggingIn(true);
+    setErrorMsg(null);
+
+    try {
+      const res = await fetch("/api/auth/verify-student-id", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          studentId: quickStudentId.trim().toUpperCase(),
+          pin: quickPin.trim() || undefined,
+          hostelId: selectedHostelId || undefined,
+        }),
+      });
+
+      const json = await res.json();
+      if (!res.ok || !json?.success) {
+        throw new Error(json?.error?.message || "Student ID or PIN verification failed.");
+      }
+
+      const sData = json.data;
+      const matched = {
+        id: sData.id,
+        first_name: sData.firstName,
+        last_name: sData.lastName,
+        admission_number: sData.studentId,
+        is_active: true,
+        hostel_id: sData.hostelId,
+        metadata: {
+          balance_paise: sData.balancePaise,
+          unlimited_calls: sData.unlimitedCalls,
+        },
+        guardians: sData.guardians.map((g) => ({
+          id: g.id,
+          relationship: g.relationship,
+          is_primary: g.is_primary,
+          parent: {
+            id: g.id,
+            first_name: g.first_name,
+            phone: g.phone,
+            email: g.email,
+            photo_url: g.photo_url,
+          },
+        })),
+      };
+
+      setSelectedStudent(matched);
+      if (matched.guardians?.length > 0) {
+        const primary = matched.guardians[0].parent || matched.guardians[0];
+        setSelectedParent({
+          id: primary.id,
+          first_name: primary.first_name,
+          relationship: matched.guardians[0].relationship || "Guardian",
+          phone: primary.phone,
+        });
+      }
+
+      setQuickStudentId("");
+      setQuickPin("");
+    } catch (err) {
+      setErrorMsg(err.message);
+    } finally {
+      setQuickLoggingIn(false);
+    }
+  };
+
   useEffect(() => {
     let ignore = false;
-    async function loadDirectory() {
+    async function init() {
       try {
-        const deviceSessionToken = localStorage.getItem("hc_device_session_token");
-        if (!deviceSessionToken) {
-          router.push("/device/activate");
-          return;
-        }
+        const savedHId = localStorage.getItem("hc_selected_hostel_id") || "";
+        const url = savedHId ? `/api/devices/directory?hostelId=${savedHId}` : "/api/devices/directory";
+        const res = await fetch(url);
+        const json = await res.json();
 
-        const res = await fetch("/api/devices/directory", {
-          headers: {
-            Authorization: `Bearer ${deviceSessionToken}`,
-          },
-        });
-
-        let json = null;
-        if (res.headers.get("content-type")?.includes("application/json")) {
-          json = await res.json();
-        }
-
-        if (res.status === 401) {
-          localStorage.removeItem("hc_device_session_token");
-          router.push("/device/activate?reason=session-expired");
-          return;
-        }
-
-        if (json?.success && json?.data) {
-          if (!ignore) {
-            setStudents(json.data);
-            setDeviceInfo(json.device || { name: "Campus Video Terminal 1" });
+        if (json?.success && !ignore) {
+          setStudents(json.data || []);
+          setTenants(json.tenants || []);
+          const chosenHostelId = json.currentHostelId || savedHId || json.tenants?.[0]?.id;
+          if (chosenHostelId) {
+            setSelectedHostelId(chosenHostelId);
           }
-        } else {
-          throw new Error(json?.error?.message || "Failed to load student directory");
+          setDeviceInfo(json.device || { name: "Campus Video Terminal" });
+
+          // Auto-select pre-authenticated student arriving from /login
+          const preAuthStudentId = localStorage.getItem("hc_active_student_id");
+          if (preAuthStudentId) {
+            const found = (json.data || []).find(
+              (s) => s.admission_number?.toUpperCase() === preAuthStudentId.toUpperCase()
+            );
+            if (found) {
+              setPinModalStudent(found);
+            }
+            localStorage.removeItem("hc_active_student_id");
+          }
         }
       } catch (err) {
-        console.error("[Kiosk Directory Load Error]:", err);
         if (!ignore) {
-          setErrorMsg(err.message || "Failed to connect to student directory.");
+          setErrorMsg(err.message || "Failed to load student directory.");
         }
       } finally {
         if (!ignore) {
@@ -146,11 +207,11 @@ export default function DeviceKioskPage() {
         }
       }
     }
-    loadDirectory();
+    init();
     return () => {
       ignore = true;
     };
-  }, [router]);
+  }, []);
 
   // When student taps their profile card -> Trigger Child PIN Keypad Modal
   const handleStudentSelect = (s) => {
@@ -231,34 +292,26 @@ export default function DeviceKioskPage() {
     setErrorMsg(null);
 
     try {
-      // ─── SECURITY: Get device session token ───
+      // Optional device session token if available
       const deviceSessionToken = localStorage.getItem("hc_device_session_token");
-      if (!deviceSessionToken) {
-        throw new Error("Device session not found. Please activate the kiosk again.");
+      const headers = { "Content-Type": "application/json" };
+      if (deviceSessionToken) {
+        headers["Authorization"] = `Bearer ${deviceSessionToken}`;
       }
 
       const res = await fetch("/api/calls/device", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${deviceSessionToken}`,
-        },
+        headers,
         body: JSON.stringify({
           studentId: selectedStudent.id,
           parentId: selectedParent.id,
-          notes: `Kiosk Call to ${selectedParent.first_name} (${selectedParent.relationship || "Parent"})`,
+          notes: `Student Kiosk Call to ${selectedParent.first_name} (${selectedParent.relationship || "Parent"})`,
         }),
       });
 
       let data = null;
       if (res.headers.get("content-type")?.includes("application/json")) {
         data = await res.json();
-      }
-
-      // Handle 401 Unauthorized - device session expired
-      if (res.status === 401) {
-        localStorage.removeItem("hc_device_session_token");
-        throw new Error("Device session expired. Please activate the kiosk again with an activation code.");
       }
 
       if (!res.ok || !data?.success) {
@@ -411,18 +464,85 @@ export default function DeviceKioskPage() {
           <div className="space-y-6">
             <div className="text-center space-y-2 max-w-xl mx-auto">
               <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#EAFBF1] dark:bg-[#00A76F]/20 text-[#007856] dark:text-[#5BE49B] text-xs font-bold mb-1">
-                <ShieldCheck className="w-3.5 h-3.5" /> Child-Safe Passcode Protected
+                <ShieldCheck className="w-3.5 h-3.5" /> Multi-Tenant Student Calling Terminal
               </div>
               <h2 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-[#1C252E] dark:text-white">
-                Tap Your Photo or Enter Student ID 📸
+                Enter Student ID & PIN or Tap Photo 📸
               </h2>
               <p className="text-xs text-[#919EAB]">
-                Select yourself, enter your 4-digit secret PIN, and video call your verified parents.
+                Separate tenanted system: Enter your Student ID and secret 4-digit PIN to directly video call your verified parents.
               </p>
             </div>
 
+            {/* ─── Tenant / School Selector ─── */}
+            {tenants.length > 0 && (
+              <div className="p-3 bg-white dark:bg-[#212B36] rounded-2xl border border-[#E5E8EB] dark:border-[#2E3844] shadow-xs flex flex-wrap items-center justify-between gap-3">
+                <div className="flex items-center gap-2 text-xs font-bold text-[#637381] dark:text-[#919EAB]">
+                  <Building className="w-4 h-4 text-[#00A76F]" />
+                  <span>Select School / Hostel:</span>
+                </div>
+                <div className="flex items-center gap-2 overflow-x-auto no-scrollbar">
+                  {tenants.map((t) => (
+                    <button
+                      key={t.id}
+                      type="button"
+                      onClick={() => handleTenantChange(t.id)}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold cursor-pointer transition-all shrink-0 ${
+                        selectedHostelId === t.id
+                          ? "bg-[#00A76F] text-white shadow-sm shadow-[#00A76F]/25"
+                          : "bg-[#F4F6F8] dark:bg-[#1C252E] border border-[#E5E8EB] dark:border-[#2E3844] text-[#637381] hover:text-[#1C252E] dark:hover:text-white"
+                      }`}
+                    >
+                      {t.name}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* ─── Fast Student ID + 4-digit PIN Direct Calling Form ─── */}
+            <form
+              onSubmit={handleQuickStudentLogin}
+              className="p-4 bg-gradient-to-br from-white to-[#F9FAFB] dark:from-[#212B36] dark:to-[#1C252E] rounded-2xl border-2 border-[#00A76F]/20 dark:border-[#00A76F]/30 shadow-sm flex flex-col sm:flex-row items-center gap-3"
+            >
+              <div className="flex-1 w-full relative">
+                <GraduationCap className="w-4 h-4 text-[#00A76F] absolute left-3.5 top-3" />
+                <input
+                  type="text"
+                  required
+                  value={quickStudentId}
+                  onChange={(e) => setQuickStudentId(e.target.value.toUpperCase())}
+                  placeholder="Student ID (e.g. STU-001, GRK-001)"
+                  className="w-full h-10 pl-10 pr-3.5 rounded-xl border border-[#E5E8EB] dark:border-[#2E3844] bg-white dark:bg-[#141A21] text-xs sm:text-sm font-bold text-[#1C252E] dark:text-white placeholder:font-normal placeholder:text-[#919EAB] focus:outline-none focus:ring-2 focus:ring-[#00A76F]/20"
+                />
+              </div>
+              <div className="w-full sm:w-36 relative">
+                <Lock className="w-4 h-4 text-[#00A76F] absolute left-3.5 top-3" />
+                <input
+                  type="password"
+                  maxLength={4}
+                  value={quickPin}
+                  onChange={(e) => setQuickPin(e.target.value.replace(/\D/g, ""))}
+                  placeholder="PIN (1234)"
+                  className="w-full h-10 pl-10 pr-3.5 rounded-xl border border-[#E5E8EB] dark:border-[#2E3844] bg-white dark:bg-[#141A21] text-xs sm:text-sm font-mono font-bold tracking-widest text-[#1C252E] dark:text-white placeholder:font-normal placeholder:text-[#919EAB] focus:outline-none focus:ring-2 focus:ring-[#00A76F]/20"
+                />
+              </div>
+              <Button
+                type="submit"
+                disabled={quickLoggingIn}
+                className="w-full sm:w-auto h-10 px-5 bg-[#00A76F] hover:bg-[#007856] text-white font-bold text-xs rounded-xl shadow-md shadow-[#00A76F]/25 shrink-0 cursor-pointer gap-2"
+              >
+                {quickLoggingIn ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <Phone className="w-4 h-4" />
+                )}
+                <span>Call Parent</span>
+              </Button>
+            </form>
+
             {/* Quick Student ID / Name / Parent Phone Search Bar */}
-            <div className="p-2 bg-white dark:bg-[#212B36] rounded-2xl border border-[#E5E8EB] dark:border-[#2E3844] shadow-md flex items-center gap-3">
+            <div className="p-2 bg-white dark:bg-[#212B36] rounded-2xl border border-[#E5E8EB] dark:border-[#2E3844] shadow-xs flex items-center gap-3">
               <Search className="w-5 h-5 text-[#00A76F] ml-3 shrink-0" />
               <input
                 type="text"

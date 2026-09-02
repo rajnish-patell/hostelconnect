@@ -88,14 +88,16 @@ function LoginForm() {
     try {
       const cleanIdentifier = identifier.trim();
 
-      // ─── Case 1: Student Login via Student ID ───
+      // ─── Case 1: Student Login via Student ID + PIN ───
       if (activeRole === "student") {
         if (!cleanIdentifier) {
           throw new Error("Please enter your Student ID (Admission Number).");
         }
+        if (!password.trim()) {
+          throw new Error("Please enter your 4-digit secret PIN (Default: 1234).");
+        }
 
         // ─── SECURITY: Validate Student ID format ───
-        // Only allow alphanumeric, hyphens, underscores (max 50 chars)
         const studentIdRegex = /^[A-Za-z0-9\-_]{2,50}$/;
         if (!studentIdRegex.test(cleanIdentifier)) {
           throw new Error(
@@ -103,24 +105,30 @@ function LoginForm() {
           );
         }
 
-        // ─── SECURITY: Verify Student ID exists on backend ───
+        // ─── SECURITY: Verify Student ID + PIN exists on backend ───
         const verifyRes = await fetch("/api/auth/verify-student-id", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ studentId: cleanIdentifier }),
+          body: JSON.stringify({
+            studentId: cleanIdentifier,
+            pin: password.trim(),
+          }),
         });
 
-        const verifyJson = verifyRes.ok ? await verifyRes.json() : null;
+        let verifyJson = null;
+        if (verifyRes.headers.get("content-type")?.includes("application/json")) {
+          verifyJson = await verifyRes.json();
+        }
 
         if (!verifyRes.ok || !verifyJson?.success) {
           throw new Error(
-            verifyJson?.error?.message || "Student ID not found. Please check and try again."
+            verifyJson?.error?.message || "Student ID or PIN incorrect. Please check and try again."
           );
         }
 
         // Store active student session in localStorage (after validation)
         localStorage.setItem("hc_active_student_id", cleanIdentifier);
-        setSuccessMsg(`Welcome, Student (${cleanIdentifier})! Launching calling terminal...`);
+        setSuccessMsg(`Welcome, ${verifyJson.data.firstName}! Launching calling terminal...`);
         setTimeout(() => {
           router.push("/device");
           router.refresh();
@@ -429,7 +437,33 @@ function LoginForm() {
             </div>
           </div>
 
-          {activeRole !== "student" && (
+          {activeRole === "student" ? (
+            <div className="space-y-1">
+              <label className="text-xs font-bold text-[#1C252E] dark:text-white flex items-center justify-between">
+                <span>Secret 4-Digit PIN <span className="text-red-500">*</span></span>
+                <span className="text-[10px] text-[#919EAB] font-normal">Default: 1234</span>
+              </label>
+              <div className="relative">
+                <Lock className="w-4 h-4 text-[#919EAB] absolute left-3.5 top-3" />
+                <input
+                  type={showPassword ? "text" : "password"}
+                  maxLength={4}
+                  required
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value.replace(/\D/g, ""))}
+                  placeholder="1234"
+                  className="w-full h-10 sm:h-11 pl-10 pr-10 rounded-xl border border-[#E5E8EB] dark:border-[#2E3844] bg-white dark:bg-[#1C252E] text-xs sm:text-sm font-mono font-bold tracking-widest text-[#1C252E] dark:text-white placeholder:font-normal placeholder:tracking-normal placeholder:text-[#919EAB] focus:outline-none focus:ring-2 focus:ring-[#00A76F]/20 focus:border-[#00A76F]"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  className="absolute right-3.5 top-3 text-[#919EAB] hover:text-[#1C252E] focus:outline-none cursor-pointer"
+                >
+                  {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
+              </div>
+            </div>
+          ) : (
             <div className="space-y-1">
               <label className="text-xs font-bold text-[#1C252E] dark:text-white flex items-center gap-1">
                 Password <span className="text-red-500">*</span>
@@ -474,7 +508,7 @@ function LoginForm() {
             {loading ? (
               <Loader2 className="w-4 h-4 animate-spin" />
             ) : activeRole === "student" ? (
-              "Open Calling Kiosk"
+              "Enter Kiosk & Call Parent 📞"
             ) : (
               "Sign In"
             )}

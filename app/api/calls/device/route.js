@@ -27,29 +27,19 @@ import { initiateCallSchema } from "@/lib/validators";
  */
 export async function POST(request) {
   try {
-    // 1. Verify device session token
+    let deviceId = null;
+    let deviceName = "Kiosk Terminal";
+
+    // 1. Optional device session token check
     const authHeader = request.headers.get("authorization");
     const sessionToken = authHeader?.replace("Bearer ", "");
 
-    if (!sessionToken || !sessionToken.startsWith("dev_")) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: { code: "DEVICE_AUTH_REQUIRED", message: "Device session token required. Please activate the kiosk first." },
-        },
-        { status: 401 }
-      );
-    }
-
-    const deviceSession = await verifyDeviceSession(sessionToken);
-    if (!deviceSession) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: { code: "INVALID_DEVICE_SESSION", message: "Device session expired or invalid. Please reactivate the kiosk." },
-        },
-        { status: 401 }
-      );
+    if (sessionToken && sessionToken.startsWith("dev_")) {
+      const deviceSession = await verifyDeviceSession(sessionToken);
+      if (deviceSession) {
+        deviceId = deviceSession.device_id;
+        deviceName = deviceSession.device.name;
+      }
     }
 
     // 2. Parse and validate request body
@@ -68,14 +58,14 @@ export async function POST(request) {
 
     const { studentId, parentId, notes } = parseResult.data;
 
-    // 3. Create call session (initiated by device, not a user)
+    // 3. Create call session (initiated by kiosk student, no activation token required)
     const session = await createCallSession({
       studentId,
       parentId,
-      deviceId: deviceSession.device_id,
-      initiatedByUserId: null, // Device initiated, no user
+      deviceId,
+      initiatedByUserId: null,
       isEmergency: false,
-      notes: notes || `Kiosk initiated call from device: ${deviceSession.device.name}`,
+      notes: notes || `Direct call from ${deviceName}`,
       ipAddress: request.headers.get("x-forwarded-for") || "127.0.0.1",
       userAgent: request.headers.get("user-agent"),
     });
