@@ -25,12 +25,11 @@ export function SessionProvider({ children }) {
       if (!error && data?.session) {
         setSession(data.session);
         setUser(data.session.user);
-        router.refresh();
       }
     } catch (err) {
       console.warn("[SessionProvider]: Token refresh skipped", err);
     }
-  }, [supabase, router]);
+  }, [supabase]);
 
   useEffect(() => {
     let mounted = true;
@@ -44,7 +43,7 @@ export function SessionProvider({ children }) {
       }
     });
 
-    // 2. Realtime Auth State Change Listener
+    // 2. Realtime Auth State Change Listener (Passive state sync without breaking server render)
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange(async (event, currentSession) => {
@@ -53,12 +52,6 @@ export function SessionProvider({ children }) {
       setSession(currentSession);
       setUser(currentSession?.user || null);
       setLoading(false);
-
-      if (event === "SIGNED_IN" || event === "TOKEN_REFRESHED") {
-        router.refresh();
-      } else if (event === "SIGNED_OUT") {
-        router.refresh();
-      }
     });
 
     // 3. Keepalive Heartbeat: Check every 10 minutes and proactively refresh expiring tokens
