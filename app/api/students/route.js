@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getCurrentUser, getUserProfile } from "@/lib/auth/rbac";
+import { requireHostelAccess, requireRole } from "@/lib/auth/rbac";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { logAuditEvent } from "@/lib/services/audit.service";
 
@@ -45,16 +45,19 @@ async function resolveUserHostelId(user, admin) {
 export async function GET(request) {
   try {
     const admin = createAdminClient();
-    const user = await getCurrentUser();
-    const profile = user ? await getUserProfile(user.id) : null;
+    const { user, profile } = await requireRole(["HOSTEL_ADMIN", "WARDEN", "STAFF"]);
     const { searchParams } = new URL(request.url);
 
     let hostelId = searchParams.get("hostelId");
     const search = searchParams.get("search");
 
     // Multi-tenant isolation: If user is HOSTEL_ADMIN or WARDEN, enforce their school's hostel_id
-    if (!hostelId && user && profile?.role !== "SUPER_ADMIN") {
+    if (profile.role !== "SUPER_ADMIN") {
       hostelId = await resolveUserHostelId(user, admin);
+    }
+
+    if (profile.role !== "SUPER_ADMIN" && !hostelId) {
+      return NextResponse.json({ success: false, error: { code: "HOSTEL_ACCESS_DENIED", message: "No active hostel assignment found." } }, { status: 403 });
     }
 
     let query = admin
@@ -105,8 +108,7 @@ export async function POST(request) {
   try {
     const body = await request.json();
     const admin = createAdminClient();
-    const user = await getCurrentUser();
-    const profile = user ? await getUserProfile(user.id) : null;
+    const { user, profile } = await requireRole(["HOSTEL_ADMIN", "WARDEN"]);
 
     let {
       hostelId,
@@ -124,33 +126,27 @@ export async function POST(request) {
       unlimitedCalls,
     } = body;
 
-    if (!firstName || !admissionNumber) {
+    if (!firstName) {
       return NextResponse.json({
         success: false,
-        error: { code: "VALIDATION_ERROR", message: "First name and Student ID (Admission Number) are required." },
+        error: { code: "VALIDATION_ERROR", message: "Student name is required." },
       }, { status: 400 });
     }
 
     // 1. Resolve exact target School Hostel ID
-    if (!hostelId && user) {
+    if (profile.role !== "SUPER_ADMIN") {
       hostelId = await resolveUserHostelId(user, admin);
     }
 
     if (!hostelId) {
-      const { data: firstHostel } = await admin
-        .from("hostels")
-        .select("id")
-        .limit(1)
-        .single();
-      hostelId = firstHostel?.id;
+      return NextResponse.json({
+        success: false, error: { code: "NO_HOSTEL", message: "Choose a hostel before creating a student." },
+      }, { status: 403 });
     }
 
-    if (!hostelId) {
-      return NextResponse.json({
-        success: false,
-        error: { code: "NO_HOSTEL", message: "No valid hostel campus found to associate student with." },
-      }, { status: 400 });
-    }
+    if (profile.role !== "SUPER_ADMIN") await requireHostelAccess(hostelId, ["HOSTEL_ADMIN", "WARDEN"]);
+
+    const simpleStudentCode = admissionNumber?.trim().toUpperCase() || `S${Date.now().toString(36).toUpperCase()}`;
 
     // 2. Create or update Student record strictly for this school
     const { data: student, error: studentErr } = await admin
@@ -159,7 +155,7 @@ export async function POST(request) {
         hostel_id: hostelId,
         first_name: firstName.trim(),
         last_name: lastName ? lastName.trim() : null,
-        admission_number: admissionNumber.trim().toUpperCase(),
+        admission_number: simpleStudentCode,
         class_grade: classGrade ? classGrade.trim() : null,
         section: section ? section.trim().toUpperCase() : null,
         is_active: true,
@@ -291,8 +287,30 @@ export async function POST(request) {
   }
 }
 
+export async function PUT(request) {
+  try {
+    const { profile } = await requireRole(["HOSTEL_ADMIN", "WARDEN"]);
+    const { id, isActive } = await request.json();
+    if (!id || typeof isActive !== "boolean") {
+      return NextResponse.json({ success: false, error: { code: "VALIDATION_ERROR", message: "Student and active status are required." } }, { status: 400 });
+    }
+
+    const admin = createAdminClient();
+    const { data: student } = await admin.from("students").select("id, hostel_id").eq("id", id).maybeSingle();
+    if (!student) return NextResponse.json({ success: false, error: { code: "NOT_FOUND", message: "Student not found." } }, { status: 404 });
+    if (profile.role !== "SUPER_ADMIN") await requireHostelAccess(student.hostel_id, ["HOSTEL_ADMIN", "WARDEN"]);
+
+    const { data, error } = await admin.from("students").update({ is_active: isActive }).eq("id", id).select().single();
+    if (error) throw error;
+    return NextResponse.json({ success: true, data });
+  } catch (err) {
+    return NextResponse.json({ success: false, error: { code: err.code || "FORBIDDEN", message: err.message } }, { status: err.status || 403 });
+  }
+}
+
 export async function DELETE(request) {
   try {
+    const { profile } = await requireRole(["HOSTEL_ADMIN", "WARDEN"]);
     const { searchParams } = new URL(request.url);
     const id = searchParams.get("id");
     if (!id) {
@@ -300,6 +318,10 @@ export async function DELETE(request) {
     }
 
     const admin = createAdminClient();
+
+    const { data: student } = await admin.from("students").select("hostel_id").eq("id", id).maybeSingle();
+    if (!student) return NextResponse.json({ success: false, error: { code: "NOT_FOUND", message: "Student not found." } }, { status: 404 });
+    if (profile.role !== "SUPER_ADMIN") await requireHostelAccess(student.hostel_id, ["HOSTEL_ADMIN", "WARDEN"]);
 
     // 1. Get guardians of this student
     const { data: guardians } = await admin

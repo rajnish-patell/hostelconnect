@@ -1,4 +1,5 @@
 import { Public_Sans } from "next/font/google";
+import Script from "next/script";
 import "./globals.css";
 import { BRAND } from "@/lib/constants/brand";
 import { ThemeProvider } from "@/components/providers/ThemeProvider";
@@ -58,7 +59,9 @@ export default function RootLayout({ children }) {
     <html lang="en" className={publicSans.variable} suppressHydrationWarning>
       <head>
         <link rel="manifest" href="/manifest.json" />
-        <script
+        <Script
+          id="theme-script"
+          strategy="beforeInteractive"
           dangerouslySetInnerHTML={{
             __html: `
               try {

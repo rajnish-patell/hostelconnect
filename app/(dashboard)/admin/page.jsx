@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from "react";
 import Link from "next/link";
+import { motion } from "framer-motion";
 import {
   Users,
   Tablet,
@@ -24,12 +25,17 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import StatusBadge from "@/components/common/StatusBadge";
+import LoadingState from "@/components/common/LoadingState";
 import { formatDuration, formatTimeSafe, formatDateSafe } from "@/lib/utils";
 
 /* ─── Minimals Stat Card ─── */
 function StatCard({ icon: Icon, iconBg, iconColor, label, value, trend, trendLabel, trendUp }) {
   return (
-    <div className="p-6 rounded-2xl bg-white dark:bg-[#212B36] shadow-[var(--shadow-card)] space-y-4 transition-all hover:shadow-[var(--shadow-card-hover)]">
+    <motion.div
+      whileHover={{ y: -4 }}
+      transition={{ duration: 0.2 }}
+      className="p-6 rounded-2xl bg-white dark:bg-[#212B36] shadow-[var(--shadow-card)] space-y-4 hover:shadow-[var(--shadow-card-hover)] transition-shadow"
+    >
       <div className="flex items-center justify-between">
         <div
           className="w-12 h-12 rounded-2xl flex items-center justify-center"
@@ -62,7 +68,7 @@ function StatCard({ icon: Icon, iconBg, iconColor, label, value, trend, trendLab
         <p className="text-[13px] font-semibold text-[#919EAB] mb-1">{label}</p>
         <p className="text-[28px] font-extrabold text-[#1C252E] dark:text-white leading-none">{value}</p>
       </div>
-    </div>
+    </motion.div>
   );
 }
 

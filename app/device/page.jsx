@@ -1,8 +1,9 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { motion, AnimatePresence } from "framer-motion";
 import {
   Tablet,
   User,
@@ -58,10 +59,31 @@ export default function DeviceKioskPage() {
     setLoading(true);
     setErrorMsg(null);
     try {
-      const res = await fetch("/api/devices/directory");
+      // ─── SECURITY: Get device session token from storage ───
+      const deviceSessionToken = localStorage.getItem("hc_device_session_token");
+      
+      if (!deviceSessionToken) {
+        // Redirect to activation page
+        router.push("/device/activate");
+        return;
+      }
+
+      const res = await fetch("/api/devices/directory", {
+        headers: {
+          Authorization: `Bearer ${deviceSessionToken}`,
+        },
+      });
+
       let json = null;
       if (res.headers.get("content-type")?.includes("application/json")) {
         json = await res.json();
+      }
+
+      // Handle 401 Unauthorized - device session expired
+      if (res.status === 401) {
+        localStorage.removeItem("hc_device_session_token");
+        router.push("/device/activate?reason=session-expired");
+        return;
       }
 
       if (json?.success && json?.data) {
@@ -79,8 +101,56 @@ export default function DeviceKioskPage() {
   };
 
   useEffect(() => {
-    fetchDirectory();
-  }, []);
+    let ignore = false;
+    async function loadDirectory() {
+      try {
+        const deviceSessionToken = localStorage.getItem("hc_device_session_token");
+        if (!deviceSessionToken) {
+          router.push("/device/activate");
+          return;
+        }
+
+        const res = await fetch("/api/devices/directory", {
+          headers: {
+            Authorization: `Bearer ${deviceSessionToken}`,
+          },
+        });
+
+        let json = null;
+        if (res.headers.get("content-type")?.includes("application/json")) {
+          json = await res.json();
+        }
+
+        if (res.status === 401) {
+          localStorage.removeItem("hc_device_session_token");
+          router.push("/device/activate?reason=session-expired");
+          return;
+        }
+
+        if (json?.success && json?.data) {
+          if (!ignore) {
+            setStudents(json.data);
+            setDeviceInfo(json.device || { name: "Campus Video Terminal 1" });
+          }
+        } else {
+          throw new Error(json?.error?.message || "Failed to load student directory");
+        }
+      } catch (err) {
+        console.error("[Kiosk Directory Load Error]:", err);
+        if (!ignore) {
+          setErrorMsg(err.message || "Failed to connect to student directory.");
+        }
+      } finally {
+        if (!ignore) {
+          setLoading(false);
+        }
+      }
+    }
+    loadDirectory();
+    return () => {
+      ignore = true;
+    };
+  }, [router]);
 
   // When student taps their profile card -> Trigger Child PIN Keypad Modal
   const handleStudentSelect = (s) => {
@@ -161,13 +231,21 @@ export default function DeviceKioskPage() {
     setErrorMsg(null);
 
     try {
-      const res = await fetch("/api/calls", {
+      // ─── SECURITY: Get device session token ───
+      const deviceSessionToken = localStorage.getItem("hc_device_session_token");
+      if (!deviceSessionToken) {
+        throw new Error("Device session not found. Please activate the kiosk again.");
+      }
+
+      const res = await fetch("/api/calls/device", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${deviceSessionToken}`,
+        },
         body: JSON.stringify({
           studentId: selectedStudent.id,
           parentId: selectedParent.id,
-          deviceId: deviceInfo?.id || null,
           notes: `Kiosk Call to ${selectedParent.first_name} (${selectedParent.relationship || "Parent"})`,
         }),
       });
@@ -176,6 +254,13 @@ export default function DeviceKioskPage() {
       if (res.headers.get("content-type")?.includes("application/json")) {
         data = await res.json();
       }
+
+      // Handle 401 Unauthorized - device session expired
+      if (res.status === 401) {
+        localStorage.removeItem("hc_device_session_token");
+        throw new Error("Device session expired. Please activate the kiosk again with an activation code.");
+      }
+
       if (!res.ok || !data?.success) {
         throw new Error(data?.error?.message || "Unable to start call session");
       }
@@ -294,7 +379,7 @@ export default function DeviceKioskPage() {
 
           <button
             type="button"
-            onClick={fetchDirectory}
+            onClick={() => fetchDirectory(true)}
             className="p-2 rounded-xl border border-[#E5E8EB] dark:border-[#2E3844] bg-white dark:bg-[#212B36] text-[#637381] hover:text-[#00A76F] shadow-xs cursor-pointer"
             title="Refresh Directory"
           >
@@ -383,28 +468,31 @@ export default function DeviceKioskPage() {
                 </Button>
               </div>
             ) : (
-              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3 sm:gap-4">
                 {filteredStudents.map((s) => {
                   const balancePaise = s.metadata?.balance_paise || s.balance_paise || 5000;
                   const isUnlimited = s.metadata?.unlimited_calls || s.unlimited_calls;
 
                   return (
-                    <button
+                    <motion.button
                       key={s.id}
                       type="button"
+                      whileHover={{ y: -4, scale: 1.02 }}
+                      whileTap={{ scale: 0.96 }}
+                      transition={{ duration: 0.2 }}
                       onClick={() => handleStudentSelect(s)}
-                      className={`p-5 rounded-3xl border transition-all text-center space-y-3 cursor-pointer flex flex-col items-center justify-between group relative ${
+                      className={`p-4 sm:p-5 rounded-3xl border transition-all text-center space-y-3 cursor-pointer flex flex-col items-center justify-between group relative ${
                         s.is_active
-                          ? "bg-white dark:bg-[#212B36] border-[#E5E8EB] dark:border-[#2E3844] shadow-xs hover:shadow-xl hover:border-[#00A76F] hover:scale-[1.02]"
+                          ? "bg-white dark:bg-[#212B36] border-[#E5E8EB] dark:border-[#2E3844] shadow-xs hover:shadow-xl hover:border-[#00A76F]"
                           : "bg-slate-100 dark:bg-slate-800/40 border-slate-200 dark:border-slate-700 opacity-60"
                       }`}
                     >
-                      <div className="w-18 h-18 rounded-full bg-gradient-to-br from-[#00A76F] to-[#007856] text-white flex items-center justify-center font-extrabold text-3xl shadow-lg shadow-[#00A76F]/25 ring-4 ring-white dark:ring-[#1C252E] group-hover:scale-105 transition-transform">
+                      <div className="w-16 h-16 sm:w-18 sm:h-18 rounded-full bg-gradient-to-br from-[#00A76F] to-[#007856] text-white flex items-center justify-center font-extrabold text-2xl sm:text-3xl shadow-lg shadow-[#00A76F]/25 ring-4 ring-white dark:ring-[#1C252E] group-hover:scale-105 transition-transform">
                         {s.first_name.charAt(0)}
                       </div>
 
                       <div>
-                        <p className="font-extrabold text-base text-[#1C252E] dark:text-white group-hover:text-[#00A76F] transition-colors">
+                        <p className="font-extrabold text-sm sm:text-base text-[#1C252E] dark:text-white group-hover:text-[#00A76F] transition-colors line-clamp-1">
                           {s.first_name} {s.last_name || ""}
                         </p>
                         <p className="text-xs font-mono font-bold text-[#00A76F] mt-0.5">
@@ -421,7 +509,7 @@ export default function DeviceKioskPage() {
                           <Lock className="w-3 h-3 text-[#00A76F]" /> PIN Protected
                         </span>
                       </div>
-                    </button>
+                    </motion.button>
                   );
                 })}
               </div>
@@ -552,111 +640,138 @@ export default function DeviceKioskPage() {
       </main>
 
       {/* ─── CHILD-FRIENDLY 4-DIGIT PIN AUTHENTICATION MODAL ─── */}
-      {pinModalStudent && (
-        <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in duration-200">
-          <div className="w-full max-w-sm bg-white dark:bg-[#212B36] rounded-3xl border border-[#E5E8EB] dark:border-[#2E3844] shadow-2xl p-6 sm:p-8 space-y-6 text-center relative animate-in zoom-in-95 duration-200">
-            {/* Close / Cancel Button */}
-            <button
-              type="button"
+      <AnimatePresence>
+        {pinModalStudent && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            {/* Backdrop */}
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.2 }}
               onClick={() => { setPinModalStudent(null); setEnteredPin(""); setPinError(null); }}
-              className="absolute top-4 right-4 p-2 rounded-full text-[#919EAB] hover:text-[#1C252E] dark:hover:text-white hover:bg-[#F4F6F8] dark:hover:bg-[#1C252E] transition-colors"
+              className="fixed inset-0 bg-black/75 backdrop-blur-xs cursor-pointer"
+            />
+
+            {/* Modal Dialog */}
+            <motion.div
+              initial={{ opacity: 0, scale: 0.92, y: 15 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.92, y: 15 }}
+              transition={{ type: "spring", damping: 25, stiffness: 350 }}
+              className="relative z-10 w-full max-w-sm bg-white dark:bg-[#212B36] rounded-3xl border border-[#E5E8EB] dark:border-[#2E3844] shadow-2xl p-6 sm:p-8 space-y-6 text-center"
             >
-              <X className="w-5 h-5" />
-            </button>
+              {/* Close / Cancel Button */}
+              <button
+                type="button"
+                onClick={() => { setPinModalStudent(null); setEnteredPin(""); setPinError(null); }}
+                className="absolute top-4 right-4 p-2 rounded-full text-[#919EAB] hover:text-[#1C252E] dark:hover:text-white hover:bg-[#F4F6F8] dark:hover:bg-[#1C252E] transition-colors cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
 
-            {/* Student Avatar & Greeting */}
-            <div className="space-y-2">
-              <div className="w-20 h-20 rounded-full bg-gradient-to-br from-[#00A76F] to-[#007856] text-white flex items-center justify-center font-extrabold text-3xl mx-auto shadow-xl shadow-[#00A76F]/25 ring-4 ring-white dark:ring-[#212B36]">
-                {pinModalStudent.first_name.charAt(0)}
+              {/* Student Avatar & Greeting */}
+              <div className="space-y-2">
+                <div className="w-20 h-20 rounded-full bg-gradient-to-br from-[#00A76F] to-[#007856] text-white flex items-center justify-center font-extrabold text-3xl mx-auto shadow-xl shadow-[#00A76F]/25 ring-4 ring-white dark:ring-[#212B36]">
+                  {pinModalStudent.first_name.charAt(0)}
+                </div>
+                <h3 className="text-xl font-extrabold text-[#1C252E] dark:text-white">
+                  Hi {pinModalStudent.first_name}! 👦
+                </h3>
+                <p className="text-xs text-[#919EAB]">
+                  Tap your 4-digit secret PIN to start video calling Mom & Dad
+                </p>
               </div>
-              <h3 className="text-xl font-extrabold text-[#1C252E] dark:text-white">
-                Hi {pinModalStudent.first_name}! 👦
-              </h3>
-              <p className="text-xs text-[#919EAB]">
-                Tap your 4-digit secret PIN to start video calling Mom & Dad
-              </p>
-            </div>
 
-            {/* 4 Glowing PIN Indicator Dots */}
-            <div className="flex items-center justify-center gap-4 py-2">
-              {[0, 1, 2, 3].map((index) => {
-                const isFilled = enteredPin.length > index;
-                return (
-                  <div
-                    key={index}
-                    className={`w-5 h-5 rounded-full transition-all duration-200 ${
-                      pinSuccess
-                        ? "bg-[#00A76F] scale-125 shadow-lg shadow-[#00A76F]/50 ring-4 ring-[#00A76F]/30"
-                        : isFilled
-                        ? "bg-[#00A76F] scale-110 shadow-md shadow-[#00A76F]/40"
-                        : "bg-[#E5E8EB] dark:bg-[#2E3844]"
-                    }`}
-                  />
-                );
-              })}
-            </div>
+              {/* 4 Glowing PIN Indicator Dots */}
+              <div className="flex items-center justify-center gap-4 py-2">
+                {[0, 1, 2, 3].map((index) => {
+                  const isFilled = enteredPin.length > index;
+                  return (
+                    <div
+                      key={index}
+                      className={`w-5 h-5 rounded-full transition-all duration-200 ${
+                        pinSuccess
+                          ? "bg-[#00A76F] scale-125 shadow-lg shadow-[#00A76F]/50 ring-4 ring-[#00A76F]/30"
+                          : isFilled
+                          ? "bg-[#00A76F] scale-110 shadow-md shadow-[#00A76F]/40"
+                          : "bg-[#E5E8EB] dark:bg-[#2E3844]"
+                      }`}
+                    />
+                  );
+                })}
+              </div>
 
-            {/* Error or Success Alert */}
-            {pinError && (
-              <p className="text-xs font-bold text-red-500 animate-in shake duration-200">
-                {pinError}
-              </p>
-            )}
-            {pinSuccess && (
-              <p className="text-xs font-bold text-[#00A76F] animate-in zoom-in-90 duration-200">
-                🎉 PIN Verified! Opening video room...
-              </p>
-            )}
+              {/* Error or Success Alert */}
+              {pinError && (
+                <p className="text-xs font-bold text-red-500 animate-in shake duration-200">
+                  {pinError}
+                </p>
+              )}
+              {pinSuccess && (
+                <p className="text-xs font-bold text-[#00A76F] animate-in zoom-in-90 duration-200">
+                  🎉 PIN Verified! Opening video room...
+                </p>
+              )}
 
-            {/* Tactile Big Number Keypad (1-9, 0, Backspace) */}
-            <div className="grid grid-cols-3 gap-3 pt-2">
-              {[1, 2, 3, 4, 5, 6, 7, 8, 9].map((num) => (
-                <button
-                  key={num}
+              {/* Tactile Big Number Keypad (1-9, 0, Backspace) */}
+              <div className="grid grid-cols-3 gap-3 pt-2">
+                {[1, 2, 3, 4, 5, 6, 7, 8, 9].map((num) => (
+                  <motion.button
+                    key={num}
+                    type="button"
+                    whileHover={{ scale: 1.05 }}
+                    whileTap={{ scale: 0.92 }}
+                    onClick={() => handlePinDigit(String(num))}
+                    className="h-14 rounded-2xl bg-[#F4F6F8] dark:bg-[#1C252E] hover:bg-[#EAFBF1] dark:hover:bg-[#00A76F]/20 text-[#1C252E] dark:text-white font-extrabold text-xl shadow-xs border border-[#E5E8EB] dark:border-[#2E3844] hover:border-[#00A76F]/50 transition-colors cursor-pointer flex items-center justify-center"
+                  >
+                    {num}
+                  </motion.button>
+                ))}
+
+                {/* Clear */}
+                <motion.button
                   type="button"
-                  onClick={() => handlePinDigit(String(num))}
-                  className="h-14 rounded-2xl bg-[#F4F6F8] dark:bg-[#1C252E] hover:bg-[#EAFBF1] dark:hover:bg-[#00A76F]/20 text-[#1C252E] dark:text-white font-extrabold text-xl shadow-xs border border-[#E5E8EB] dark:border-[#2E3844] hover:border-[#00A76F]/50 transition-all active:scale-90 cursor-pointer flex items-center justify-center"
+                  whileHover={{ scale: 1.05 }}
+                  whileTap={{ scale: 0.92 }}
+                  onClick={() => { setEnteredPin(""); setPinError(null); }}
+                  className="h-14 rounded-2xl bg-[#F4F6F8] dark:bg-[#1C252E] hover:bg-slate-200 dark:hover:bg-slate-800 text-[#919EAB] font-bold text-xs shadow-xs border border-[#E5E8EB] dark:border-[#2E3844] transition-colors cursor-pointer flex items-center justify-center"
                 >
-                  {num}
-                </button>
-              ))}
+                  Clear
+                </motion.button>
 
-              {/* Clear */}
-              <button
-                type="button"
-                onClick={() => { setEnteredPin(""); setPinError(null); }}
-                className="h-14 rounded-2xl bg-[#F4F6F8] dark:bg-[#1C252E] hover:bg-slate-200 dark:hover:bg-slate-800 text-[#919EAB] font-bold text-xs shadow-xs border border-[#E5E8EB] dark:border-[#2E3844] transition-all active:scale-90 cursor-pointer flex items-center justify-center"
-              >
-                Clear
-              </button>
+                {/* Digit 0 */}
+                <motion.button
+                  type="button"
+                  whileHover={{ scale: 1.05 }}
+                  whileTap={{ scale: 0.92 }}
+                  onClick={() => handlePinDigit("0")}
+                  className="h-14 rounded-2xl bg-[#F4F6F8] dark:bg-[#1C252E] hover:bg-[#EAFBF1] dark:hover:bg-[#00A76F]/20 text-[#1C252E] dark:text-white font-extrabold text-xl shadow-xs border border-[#E5E8EB] dark:border-[#2E3844] hover:border-[#00A76F]/50 transition-colors cursor-pointer flex items-center justify-center"
+                >
+                  0
+                </motion.button>
 
-              {/* Digit 0 */}
-              <button
-                type="button"
-                onClick={() => handlePinDigit("0")}
-                className="h-14 rounded-2xl bg-[#F4F6F8] dark:bg-[#1C252E] hover:bg-[#EAFBF1] dark:hover:bg-[#00A76F]/20 text-[#1C252E] dark:text-white font-extrabold text-xl shadow-xs border border-[#E5E8EB] dark:border-[#2E3844] hover:border-[#00A76F]/50 transition-all active:scale-90 cursor-pointer flex items-center justify-center"
-              >
-                0
-              </button>
+                {/* Backspace */}
+                <motion.button
+                  type="button"
+                  whileHover={{ scale: 1.05 }}
+                  whileTap={{ scale: 0.92 }}
+                  onClick={handlePinBackspace}
+                  className="h-14 rounded-2xl bg-[#F4F6F8] dark:bg-[#1C252E] hover:bg-red-50 dark:hover:bg-red-950/30 text-red-500 font-bold text-sm shadow-xs border border-[#E5E8EB] dark:border-[#2E3844] transition-colors cursor-pointer flex items-center justify-center"
+                >
+                  <Delete className="w-5 h-5" />
+                </motion.button>
+              </div>
 
-              {/* Backspace */}
-              <button
-                type="button"
-                onClick={handlePinBackspace}
-                className="h-14 rounded-2xl bg-[#F4F6F8] dark:bg-[#1C252E] hover:bg-red-50 dark:hover:bg-red-950/30 text-red-500 font-bold text-sm shadow-xs border border-[#E5E8EB] dark:border-[#2E3844] transition-all active:scale-90 cursor-pointer flex items-center justify-center"
-              >
-                <Delete className="w-5 h-5" />
-              </button>
-            </div>
-
-            {/* Helper / Warden Override Tip */}
-            <div className="pt-2 border-t border-[#F1F3F5] dark:border-[#2E3844] text-[11px] text-[#919EAB] flex items-center justify-between">
-              <span>Default PIN: <strong className="text-[#00A76F]">1234</strong></span>
-              <span className="text-[10px]">Warden Help: <strong className="text-[#8E33FF]">9999</strong></span>
-            </div>
+              {/* Helper / Warden Override Tip */}
+              <div className="pt-2 border-t border-[#F1F3F5] dark:border-[#2E3844] text-[11px] text-[#919EAB] flex items-center justify-between">
+                <span>Default PIN: <strong className="text-[#00A76F]">1234</strong></span>
+                <span className="text-[10px]">Warden Help: <strong className="text-[#8E33FF]">9999</strong></span>
+              </div>
+            </motion.div>
           </div>
-        </div>
-      )}
+        )}
+      </AnimatePresence>
     </div>
   );
 }

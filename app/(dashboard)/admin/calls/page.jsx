@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
 import StatusBadge from "@/components/common/StatusBadge";
+import LoadingState from "@/components/common/LoadingState";
 import { formatDuration, formatDateSafe, formatTimeSafe } from "@/lib/utils";
 
 export default function AdminCallsPage() {
@@ -31,7 +32,28 @@ export default function AdminCallsPage() {
   };
 
   useEffect(() => {
-    fetchCalls();
+    let ignore = false;
+    async function loadData() {
+      try {
+        const res = await fetch("/api/calls?limit=30");
+        if (res.ok && res.headers.get("content-type")?.includes("application/json")) {
+          const json = await res.json();
+          if (!ignore && json.success) {
+            setCalls(json.data || []);
+          }
+        }
+      } catch (e) {
+        console.error(e);
+      } finally {
+        if (!ignore) {
+          setLoading(false);
+        }
+      }
+    }
+    loadData();
+    return () => {
+      ignore = true;
+    };
   }, []);
 
   const filtered = calls.filter((c) => {
@@ -67,7 +89,7 @@ export default function AdminCallsPage() {
           <p className="text-sm text-slate-500">Immutable records of all student-parent video calling sessions</p>
         </div>
 
-        <Button variant="outline" size="sm" onClick={fetchCalls} className="rounded-xl gap-1 font-bold">
+        <Button variant="outline" size="sm" onClick={() => fetchCalls(true)} className="rounded-xl gap-1 font-bold">
           <RefreshCw className="w-3.5 h-3.5" /> Refresh Logs
         </Button>
       </div>

@@ -64,7 +64,28 @@ export default function SuperAdminHostelsPage() {
   };
 
   useEffect(() => {
-    fetchHostels();
+    let ignore = false;
+    async function loadData() {
+      try {
+        const res = await fetch("/api/hostels");
+        if (res.ok && res.headers.get("content-type")?.includes("application/json")) {
+          const json = await res.json();
+          if (!ignore && json.success) {
+            setHostels(json.data || []);
+          }
+        }
+      } catch (e) {
+        console.error(e);
+      } finally {
+        if (!ignore) {
+          setLoading(false);
+        }
+      }
+    }
+    loadData();
+    return () => {
+      ignore = true;
+    };
   }, []);
 
   const toggleSchoolStatus = async (hostel) => {

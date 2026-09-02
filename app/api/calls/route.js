@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getCurrentUser, getUserProfile } from "@/lib/auth/rbac";
+import { getCurrentUser, getUserProfile, requireAuth, verifyParentStudentRelation } from "@/lib/auth/rbac";
 import { createCallSession } from "@/lib/services/call.service";
 import { initiateCallSchema } from "@/lib/validators";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -32,20 +32,7 @@ export async function GET(request) {
         .select("id, phone")
         .eq("user_id", user.id);
 
-      const userPhone = profile?.phone || parentRecords?.[0]?.phone || user?.user_metadata?.phone;
-
       let parentIds = (parentRecords || []).map((p) => p.id);
-      if (userPhone) {
-        const cleanPhone = userPhone.replace(/\D/g, "");
-        const { data: samePhoneParents } = await admin
-          .from("parents")
-          .select("id")
-          .eq("phone", cleanPhone);
-
-        if (samePhoneParents) {
-          parentIds = [...new Set([...parentIds, ...samePhoneParents.map((p) => p.id)])];
-        }
-      }
 
       // Also find all students linked to this parent
       let studentIds = [];
@@ -67,7 +54,7 @@ export async function GET(request) {
       } else {
         return NextResponse.json({ success: true, data: [], pagination: { total: 0, page, limit } });
       }
-    } else if (profile?.role === "HOSTEL_ADMIN" || profile?.role === "WARDEN") {
+    } else if (["HOSTEL_ADMIN", "WARDEN", "STAFF"].includes(profile?.role)) {
       // Find hostel of this admin
       const { data: member } = await admin
         .from("hostel_members")
@@ -79,6 +66,8 @@ export async function GET(request) {
 
       if (member?.hostel_id) {
         query = query.eq("hostel_id", member.hostel_id);
+      } else {
+        return NextResponse.json({ success: true, data: [], pagination: { total: 0, page, limit } });
       }
     }
 
@@ -118,11 +107,8 @@ export async function POST(request) {
     let { studentId, parentId, deviceId, isEmergency, notes } = parseResult.data;
     const admin = createAdminClient();
 
-    let initiatedByUserId = null;
-    const user = await getCurrentUser();
-    if (user) {
-      initiatedByUserId = user.id;
-    }
+    const { user, profile } = await requireAuth();
+    const initiatedByUserId = user.id;
 
     const isUuid = (val) => typeof val === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val);
 
@@ -153,6 +139,10 @@ export async function POST(request) {
         success: false,
         error: { code: "NO_PARENT", message: "No registered parent found for this student." },
       }, { status: 400 });
+    }
+
+    if (profile.role === "PARENT" && !(await verifyParentStudentRelation(studentId, user.id))) {
+      return NextResponse.json({ success: false, error: { code: "FORBIDDEN", message: "You can only start calls for your linked students." } }, { status: 403 });
     }
 
     const session = await createCallSession({

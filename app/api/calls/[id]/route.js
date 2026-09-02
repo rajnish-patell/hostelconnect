@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getCurrentUser } from "@/lib/auth/rbac";
+import { getCurrentUser, requireHostelAccess } from "@/lib/auth/rbac";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 export async function GET(request, { params }) {
@@ -48,6 +48,10 @@ export async function GET(request, { params }) {
         success: false,
         error: { code: "FORBIDDEN", message: "You do not have permission to view this call session" },
       }, { status: 403 });
+    }
+
+    if (isAdminOrStaff && userRole !== "SUPER_ADMIN") {
+      await requireHostelAccess(session.hostel_id, ["HOSTEL_ADMIN", "WARDEN", "STAFF"]);
     }
 
     return NextResponse.json({

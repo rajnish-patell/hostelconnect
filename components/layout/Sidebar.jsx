@@ -3,6 +3,7 @@
 import React from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { motion, AnimatePresence } from "framer-motion";
 import {
   LayoutDashboard,
   Users,
@@ -108,13 +109,19 @@ export default function Sidebar({ user, profile, isOpen, onClose }) {
 
   return (
     <>
-      {/* Mobile Backdrop */}
-      {isOpen && (
-        <div
-          onClick={onClose}
-          className="fixed inset-0 z-40 bg-[#1C252E]/60 backdrop-blur-sm lg:hidden"
-        />
-      )}
+      {/* Mobile Backdrop with Framer Motion */}
+      <AnimatePresence>
+        {isOpen && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.2 }}
+            onClick={onClose}
+            className="fixed inset-0 z-40 bg-[#1C252E]/60 backdrop-blur-xs lg:hidden"
+          />
+        )}
+      </AnimatePresence>
 
       <aside
         className={`fixed top-0 left-0 z-50 h-screen w-[280px] bg-white dark:bg-[#1C252E] border-r border-dashed border-[#E5E8EB] dark:border-[#2E3844] transition-transform duration-300 flex flex-col ${
@@ -168,28 +175,38 @@ export default function Sidebar({ user, profile, isOpen, onClose }) {
                 const isActive = pathname === item.href;
 
                 return (
-                  <Link
+                  <motion.div
                     key={item.href}
-                    href={item.href}
-                    onClick={onClose}
-                    className={`flex items-center justify-between px-3 py-2.5 rounded-lg text-[13px] font-medium transition-all duration-200 ${
-                      isActive
-                        ? "bg-[rgba(0,167,111,0.08)] text-[#00A76F] font-bold"
-                        : "text-[#637381] hover:bg-[#F4F6F8] dark:hover:bg-[#212B36] hover:text-[#1C252E] dark:hover:text-white"
-                    }`}
+                    whileHover={{ x: 3 }}
+                    whileTap={{ scale: 0.98 }}
+                    transition={{ duration: 0.15 }}
                   >
-                    <div className="flex items-center gap-3">
-                      <Icon
-                        className={`w-[18px] h-[18px] ${
-                          isActive ? "text-[#00A76F]" : "text-[#919EAB]"
-                        }`}
-                      />
-                      <span>{item.label}</span>
-                    </div>
-                    {isActive && (
-                      <div className="w-2 h-2 rounded-full bg-[#00A76F]" />
-                    )}
-                  </Link>
+                    <Link
+                      href={item.href}
+                      onClick={onClose}
+                      className={`flex items-center justify-between px-3 py-2.5 rounded-lg text-[13px] font-medium transition-colors relative ${
+                        isActive
+                          ? "bg-[rgba(0,167,111,0.08)] text-[#00A76F] font-bold"
+                          : "text-[#637381] hover:bg-[#F4F6F8] dark:hover:bg-[#212B36] hover:text-[#1C252E] dark:hover:text-white"
+                      }`}
+                    >
+                      <div className="flex items-center gap-3">
+                        <Icon
+                          className={`w-[18px] h-[18px] ${
+                            isActive ? "text-[#00A76F]" : "text-[#919EAB]"
+                          }`}
+                        />
+                        <span>{item.label}</span>
+                      </div>
+                      {isActive && (
+                        <motion.div
+                          layoutId="activeNavIndicator"
+                          className="w-2 h-2 rounded-full bg-[#00A76F]"
+                          transition={{ type: "spring", stiffness: 500, damping: 35 }}
+                        />
+                      )}
+                    </Link>
+                  </motion.div>
                 );
               })}
             </div>

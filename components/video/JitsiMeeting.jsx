@@ -62,7 +62,7 @@ export default function JitsiMeetingWrapper({
 
   // Call & Media States
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
-  const [isWarningShown, setIsWarningShown] = useState(false);
+  const warningShownRef = useRef(false);
   const [callEnded, setCallEnded] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
   const [isVideoOff, setIsVideoOff] = useState(false);
@@ -370,13 +370,16 @@ export default function JitsiMeetingWrapper({
 
   // Supervision Warnings & Auto Hangup
   useEffect(() => {
-    if (remainingSeconds <= 120 && remainingSeconds > 0 && !isWarningShown) {
-      setIsWarningShown(true);
+    if (remainingSeconds <= 120 && remainingSeconds > 0 && !warningShownRef.current) {
+      warningShownRef.current = true;
     }
     if (remainingSeconds === 0 && !callEnded) {
-      handleEndCall("MAX_DURATION_REACHED");
+      const timer = setTimeout(() => {
+        handleEndCall("MAX_DURATION_REACHED");
+      }, 0);
+      return () => clearTimeout(timer);
     }
-  }, [remainingSeconds, isWarningShown, callEnded, handleEndCall]);
+  }, [remainingSeconds, callEnded, handleEndCall]);
 
   // Initialize Whiteboard Canvas Context when Whiteboard opens
   useEffect(() => {

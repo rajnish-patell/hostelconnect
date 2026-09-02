@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { requireAuth } from "@/lib/auth/rbac";
+import { requireAuth, requireRole } from "@/lib/auth/rbac";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { logAuditEvent } from "@/lib/services/audit.service";
 
@@ -61,6 +61,7 @@ export async function GET(request) {
 
 export async function POST(request) {
   try {
+    await requireRole(["SUPER_ADMIN"]);
     const body = await request.json();
     const admin = createAdminClient();
 
@@ -174,6 +175,7 @@ export async function POST(request) {
 
 export async function PUT(request) {
   try {
+    await requireRole(["SUPER_ADMIN"]);
     const body = await request.json();
     const admin = createAdminClient();
 
@@ -217,6 +219,7 @@ export async function PUT(request) {
 
 export async function DELETE(request) {
   try {
+    await requireRole(["SUPER_ADMIN"]);
     const { searchParams } = new URL(request.url);
     const id = searchParams.get("id");
     if (!id) {

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useSyncExternalStore } from "react";
 import Link from "next/link";
 import { Video, Clock, ArrowLeft, RefreshCw, Search, PhoneCall } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -9,12 +9,14 @@ import StatusBadge from "@/components/common/StatusBadge";
 import LoadingState from "@/components/common/LoadingState";
 import { formatDuration, formatTimeSafe, formatDateSafe } from "@/lib/utils";
 
+const emptySubscribe = () => () => {};
+
 export default function ParentCallsHistoryPage() {
   const [calls, setCalls] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
-  const [mounted, setMounted] = useState(false);
+  const mounted = useSyncExternalStore(emptySubscribe, () => true, () => false);
 
   const fetchCalls = async (pageNum = 1) => {
     setLoading(true);
@@ -35,8 +37,29 @@ export default function ParentCallsHistoryPage() {
   };
 
   useEffect(() => {
-    setMounted(true);
-    fetchCalls(1);
+    let ignore = false;
+    async function loadData() {
+      try {
+        const res = await fetch("/api/calls?page=1&limit=25");
+        if (res.ok) {
+          const json = await res.json();
+          if (!ignore && json.success && Array.isArray(json.data)) {
+            setCalls(json.data);
+            setPage(1);
+          }
+        }
+      } catch (e) {
+        console.error(e);
+      } finally {
+        if (!ignore) {
+          setLoading(false);
+        }
+      }
+    }
+    loadData();
+    return () => {
+      ignore = true;
+    };
   }, []);
 
   const cleanTerm = search.toLowerCase().trim();

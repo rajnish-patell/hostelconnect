@@ -4,6 +4,10 @@ import { logAuditEvent, logSecurityEvent } from "@/lib/services/audit.service";
 
 export async function POST(request) {
   try {
+    if (process.env.NODE_ENV === "production" && process.env.ADMIN_BOOTSTRAP_ENABLED !== "true") {
+      return NextResponse.json({ success: false, error: "Not found" }, { status: 404 });
+    }
+
     const body = await request.json();
     const { secret, email } = body;
 

@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from "react";
 import Link from "next/link";
+import { motion, AnimatePresence } from "framer-motion";
 import {
   Video,
   User,
@@ -12,6 +13,7 @@ import {
   ArrowRight,
   Heart,
   CheckCircle2,
+  AlertCircle,
   IndianRupee,
   CreditCard,
   Sparkles,
@@ -49,6 +51,7 @@ export default function ParentDashboardPage() {
   const [rechargeAmount, setRechargeAmount] = useState(100);
   const [recharging, setRecharging] = useState(false);
   const [successMsg, setSuccessMsg] = useState(null);
+  const [errorMsg, setErrorMsg] = useState(null);
 
   useEffect(() => {
     let isMounted = true;
@@ -65,6 +68,8 @@ export default function ParentDashboardPage() {
           if (isMounted && pJson.success && pJson.data) {
             setParentData(pJson.data);
           }
+        } else if (pRes.status === "fulfilled" && !pRes.value.ok) {
+          console.error("[Parent API Error]:", pRes.value.status);
         }
 
         if (cRes.status === "fulfilled" && cRes.value.ok) {
@@ -72,6 +77,8 @@ export default function ParentDashboardPage() {
           if (isMounted && cJson.success && Array.isArray(cJson.data)) {
             setRecentCalls(cJson.data);
           }
+        } else if (cRes.status === "fulfilled" && !cRes.value.ok) {
+          console.error("[Calls API Error]:", cRes.value.status);
         }
       } catch (err) {
         console.error("[Parent Dashboard Data Load Error]:", err);
@@ -87,50 +94,132 @@ export default function ParentDashboardPage() {
     };
   }, []);
 
+  const loadRazorpayScript = () => {
+    return new Promise((resolve) => {
+      if (window.Razorpay) {
+        return resolve(true);
+      }
+      const script = document.createElement("script");
+      script.src = "https://checkout.razorpay.com/v1/checkout.js";
+      script.onload = () => resolve(true);
+      script.onerror = () => resolve(false);
+      document.body.appendChild(script);
+    });
+  };
+
   const handleParentRecharge = async (e) => {
     e.preventDefault();
     if (!selectedStudentForRecharge) return;
 
     setRecharging(true);
+    setErrorMsg(null);
+
     try {
-      const res = await fetch("/api/payments/create-order", {
+      // 1. Load Razorpay script
+      const scriptLoaded = await loadRazorpayScript();
+      if (!scriptLoaded) {
+        throw new Error("Failed to load Razorpay payment gateway. Please check your internet connection.");
+      }
+
+      // 2. Create recharge order
+      const orderRes = await fetch("/api/payments/parent-recharge", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          action: "parent_recharge",
           studentId: selectedStudentForRecharge.id,
           amountRupees: rechargeAmount,
         }),
       });
 
-      setSuccessMsg(`Payment of ₹${rechargeAmount} successful! Calling balance credited to ${selectedStudentForRecharge.first_name}.`);
-      setShowRechargeModal(false);
-      setSelectedStudentForRecharge(null);
-
-      // Update student balance locally
-      if (parentData?.student_guardians) {
-        setParentData({
-          ...parentData,
-          student_guardians: parentData.student_guardians.map((g) => {
-            if (g.student?.id === selectedStudentForRecharge.id) {
-              const prev = g.student.metadata?.balance_paise || 5000;
-              return {
-                ...g,
-                student: {
-                  ...g.student,
-                  metadata: { ...g.student.metadata, balance_paise: prev + rechargeAmount * 100 },
-                },
-              };
-            }
-            return g;
-          }),
-        });
+      const orderData = await orderRes.json();
+      if (!orderRes.ok || !orderData.success) {
+        throw new Error(orderData.error?.message || "Failed to initialize payment");
       }
 
-      setTimeout(() => setSuccessMsg(null), 4000);
-    } catch (e) {
-      console.error(e);
-    } finally {
+      const { orderId, amount, currency, keyId, studentName } = orderData.data;
+
+      // 3. Open Razorpay Modal
+      const options = {
+        key: keyId,
+        amount: amount,
+        currency: currency,
+        name: "HostelConnect",
+        description: `Recharge wallet for ${studentName} - ₹${rechargeAmount}`,
+        order_id: orderId,
+        prefill: {
+          name: parentData?.first_name || "",
+          email: parentData?.email || "",
+          contact: parentData?.phone || "",
+        },
+        theme: {
+          color: "#00A76F",
+        },
+        handler: async function (response) {
+          setRecharging(true);
+          try {
+            // 4. Verify signature server-side
+            const verifyRes = await fetch("/api/payments/parent-recharge-verify", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                razorpay_order_id: response.razorpay_order_id,
+                razorpay_payment_id: response.razorpay_payment_id,
+                razorpay_signature: response.razorpay_signature,
+                studentId: selectedStudentForRecharge.id,
+              }),
+            });
+
+            const verifyData = await verifyRes.json();
+            if (!verifyRes.ok || !verifyData.success) {
+              throw new Error(verifyData.error?.message || "Payment verification failed");
+            }
+
+            setSuccessMsg(`Payment of ₹${rechargeAmount} successful! Calling balance credited to ${studentName}.`);
+
+            // Update student balance locally
+            if (parentData?.student_guardians) {
+              setParentData({
+                ...parentData,
+                student_guardians: parentData.student_guardians.map((g) => {
+                  if (g.student?.id === selectedStudentForRecharge.id) {
+                    return {
+                      ...g,
+                      student: {
+                        ...g.student,
+                        metadata: {
+                          ...g.student.metadata,
+                          balance_paise: Math.floor(parseFloat(verifyData.data.newBalance) * 100),
+                        },
+                      },
+                    };
+                  }
+                  return g;
+                }),
+              });
+            }
+
+            setShowRechargeModal(false);
+            setSelectedStudentForRecharge(null);
+            setTimeout(() => setSuccessMsg(null), 5000);
+          } catch (err) {
+            console.error("[Recharge Verification Error]:", err);
+            setErrorMsg(err.message || "Payment verification failed. Please contact support.");
+          } finally {
+            setRecharging(false);
+          }
+        },
+        modal: {
+          ondismiss: function () {
+            setRecharging(false);
+          },
+        },
+      };
+
+      const paymentObject = new window.Razorpay(options);
+      paymentObject.open();
+    } catch (err) {
+      console.error("[Recharge Error]:", err);
+      setErrorMsg(err.message || "Failed to process recharge. Please try again.");
       setRecharging(false);
     }
   };
@@ -178,6 +267,14 @@ export default function ParentDashboardPage() {
         </div>
       )}
 
+      {/* Error Notification */}
+      {errorMsg && (
+        <div className="p-4 bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-800 text-red-800 dark:text-red-300 rounded-2xl text-xs flex items-center gap-3 font-semibold animate-in fade-in">
+          <AlertCircle className="w-5 h-5 text-red-600 shrink-0" />
+          <span>{errorMsg}</span>
+        </div>
+      )}
+
       {/* ─── Linked Children Cards (Student ID ↔ Parent ID) ─── */}
       <div className="space-y-4">
         <div className="flex items-center justify-between">
@@ -212,13 +309,15 @@ export default function ParentDashboardPage() {
               const isUnlimited = Boolean(student?.metadata?.unlimited_calls || student?.unlimited_calls);
 
               return (
-                <div
+                <motion.div
                   key={g.id}
-                  className="rounded-2xl bg-white dark:bg-[#212B36] border border-[#E5E8EB] dark:border-[#2E3844] shadow-xs p-6 space-y-5 transition-all hover:shadow-md"
+                  whileHover={{ y: -4 }}
+                  transition={{ duration: 0.2 }}
+                  className="rounded-2xl bg-white dark:bg-[#212B36] border border-[#E5E8EB] dark:border-[#2E3844] shadow-xs p-6 space-y-5 hover:shadow-md transition-shadow"
                 >
                   <div className="flex items-start justify-between">
                     <div className="flex items-center gap-3">
-                      <div className="w-12 h-12 rounded-full bg-gradient-to-br from-[#00A76F] to-[#007856] text-white flex items-center justify-center font-bold text-lg flex-shrink-0">
+                      <div className="w-12 h-12 rounded-full bg-gradient-to-br from-[#00A76F] to-[#007856] text-white flex items-center justify-center font-bold text-lg flex-shrink-0 shadow-xs">
                         {student?.first_name?.charAt(0) || "S"}
                       </div>
                       <div>
@@ -233,31 +332,33 @@ export default function ParentDashboardPage() {
                         </p>
                       </div>
                     </div>
-
-                    <span className="inline-flex items-center gap-1 text-[11px] font-bold text-[#00A76F] bg-[#EAFBF1] dark:bg-[#00A76F]/20 px-2.5 py-0.5 rounded-full">
-                      <ShieldCheck className="w-3.5 h-3.5" /> Verified
+                    <span
+                      className={`inline-flex items-center gap-1 text-[11px] font-bold px-2.5 py-1 rounded-full ${
+                        g.is_primary
+                          ? "bg-[#00A76F]/10 text-[#00A76F]"
+                          : "bg-[#F4F6F8] dark:bg-[#2E3844] text-[#637381] dark:text-[#919EAB]"
+                      }`}
+                    >
+                      <ShieldCheck className="w-3.5 h-3.5" />
+                      {g.relationship || (g.is_primary ? "Primary" : "Guardian")}
                     </span>
                   </div>
 
-                  {/* Wallet Balance & Calling Timer */}
-                  <div className="p-3.5 rounded-xl bg-[#F4F6F8] dark:bg-[#1C252E] border border-[#E5E8EB] dark:border-[#2E3844] flex items-center justify-between text-xs">
+                  <div className="p-3.5 rounded-xl bg-[#F4F6F8] dark:bg-[#1C252E] flex items-center justify-between">
                     <div>
-                      <span className="text-[#919EAB] text-[11px] block">Calling Balance</span>
-                      <span className="font-extrabold text-sm text-[#00A76F] flex items-center gap-0.5">
-                        <IndianRupee className="w-3.5 h-3.5" /> {(balancePaise / 100).toFixed(0)}
-                      </span>
+                      <p className="text-[11px] font-bold uppercase tracking-wider text-[#919EAB]">Calling Balance</p>
+                      <p className="text-lg font-extrabold text-[#1C252E] dark:text-white">
+                        {isUnlimited ? "Unlimited" : `₹${(balancePaise / 100).toFixed(2)}`}
+                      </p>
                     </div>
-                    <div className="text-right">
-                      <span className="text-[#919EAB] text-[11px] block">Call Limit</span>
-                      <span className="font-bold text-[#1C252E] dark:text-white">
-                        {isUnlimited ? "Unlimited" : "15 Mins (₹2/Min)"}
-                      </span>
-                    </div>
+                    <span className="text-xs font-bold text-[#00A76F]">
+                      {isUnlimited ? "Campus Plan" : `${Math.floor(balancePaise / 200)} Mins`}
+                    </span>
                   </div>
 
-                  {/* Actions: Schedule Call & Recharge Wallet */}
                   <div className="grid grid-cols-2 gap-2 pt-1">
                     <Button
+                      type="button"
                       onClick={() => {
                         setSelectedStudentForRecharge(student);
                         setShowRechargeModal(true);
@@ -273,7 +374,7 @@ export default function ParentDashboardPage() {
                       </Button>
                     </Link>
                   </div>
-                </div>
+                </motion.div>
               );
             })}
           </div>
@@ -356,88 +457,124 @@ export default function ParentDashboardPage() {
       </div>
 
       {/* ─── Parent Smart Recharge Modal ─── */}
-      {showRechargeModal && selectedStudentForRecharge && (
-        <div className="fixed inset-0 z-50 bg-[#1C252E]/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-[#212B36] rounded-3xl border border-[#E5E8EB] dark:border-[#2E3844] shadow-2xl max-w-md w-full p-6 sm:p-8 space-y-6 animate-in fade-in zoom-in-95">
-            <div className="flex items-center justify-between pb-4 border-b border-[#F1F3F5] dark:border-[#2E3844]">
-              <div>
-                <h3 className="text-lg font-bold text-[#1C252E] dark:text-white">Recharge Student Account 💳</h3>
-                <p className="text-xs text-[#919EAB]">Instant wallet top-up for hostel video calls (₹2/Min)</p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setShowRechargeModal(false)}
-                className="p-2 rounded-xl text-[#919EAB] hover:text-[#1C252E] dark:hover:text-white cursor-pointer"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
+      <AnimatePresence>
+        {showRechargeModal && selectedStudentForRecharge && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            {/* Backdrop */}
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.2 }}
+              onClick={() => {
+                setShowRechargeModal(false);
+                setErrorMsg(null);
+              }}
+              className="fixed inset-0 bg-[#1C252E]/60 backdrop-blur-xs cursor-pointer"
+            />
 
-            <div className="p-4 rounded-2xl bg-[#EAFBF1] dark:bg-[#00A76F]/10 border border-[#C8FACD] dark:border-[#00A76F]/20 space-y-1">
-              <p className="text-xs text-[#007856] dark:text-[#5BE49B] font-bold">Recharge for Student:</p>
-              <p className="text-base font-extrabold text-[#1C252E] dark:text-white">
-                {selectedStudentForRecharge.first_name} {selectedStudentForRecharge.last_name || ""}
-              </p>
-              <p className="text-xs font-mono text-[#00A76F]">Student ID: {selectedStudentForRecharge.admission_number}</p>
-            </div>
-
-            <form onSubmit={handleParentRecharge} className="space-y-4">
-              <div className="space-y-2">
-                <label className="text-xs font-bold text-[#1C252E] dark:text-white">Choose Recharge Plan</label>
-                <div className="grid grid-cols-4 gap-2">
-                  {[50, 100, 200, 500].map((amt) => (
-                    <button
-                      key={amt}
-                      type="button"
-                      onClick={() => setRechargeAmount(amt)}
-                      className={`py-3 rounded-2xl text-xs font-extrabold cursor-pointer transition-all ${
-                        rechargeAmount === amt
-                          ? "bg-[#00A76F] text-white shadow-md shadow-[#00A76F]/25 scale-[1.02]"
-                          : "bg-[#F4F6F8] dark:bg-[#1C252E] text-[#637381] border border-[#E5E8EB] dark:border-[#2E3844]"
-                      }`}
-                    >
-                      ₹{amt}
-                    </button>
-                  ))}
+            {/* Modal Dialog */}
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 15 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 15 }}
+              transition={{ type: "spring", damping: 25, stiffness: 350 }}
+              className="relative z-10 bg-white dark:bg-[#212B36] rounded-3xl border border-[#E5E8EB] dark:border-[#2E3844] shadow-2xl max-w-md w-full p-6 sm:p-8 space-y-6"
+            >
+              <div className="flex items-center justify-between pb-4 border-b border-[#F1F3F5] dark:border-[#2E3844]">
+                <div>
+                  <h3 className="text-lg font-bold text-[#1C252E] dark:text-white">Recharge Student Account 💳</h3>
+                  <p className="text-xs text-[#919EAB]">Instant wallet top-up for hostel video calls (₹2/Min)</p>
                 </div>
-              </div>
-
-              <div className="p-3 rounded-xl bg-[#F4F6F8] dark:bg-[#1C252E] text-xs text-[#637381] dark:text-[#919EAB] space-y-1">
-                <div className="flex justify-between">
-                  <span>Calling Minutes:</span>
-                  <span className="font-bold text-[#1C252E] dark:text-white">{Math.floor(rechargeAmount / 2)} Minutes</span>
-                </div>
-                <div className="flex justify-between">
-                  <span>Per-minute rate:</span>
-                  <span className="font-bold text-[#00A76F]">₹2.00 / Min</span>
-                </div>
-                <div className="flex justify-between">
-                  <span>Payment Gateway:</span>
-                  <span className="font-bold text-[#1C252E] dark:text-white">Razorpay (Direct Company Account)</span>
-                </div>
-              </div>
-
-              <div className="flex justify-end gap-3 pt-2">
-                <Button
+                <button
                   type="button"
-                  variant="outline"
-                  onClick={() => setShowRechargeModal(false)}
-                  className="rounded-xl font-bold text-xs cursor-pointer"
+                  onClick={() => {
+                    setShowRechargeModal(false);
+                    setErrorMsg(null);
+                  }}
+                  className="p-2 rounded-xl text-[#919EAB] hover:text-[#1C252E] dark:hover:text-white cursor-pointer"
                 >
-                  Cancel
-                </Button>
-                <Button
-                  type="submit"
-                  disabled={recharging}
-                  className="bg-[#00A76F] hover:bg-[#007856] text-white rounded-xl font-bold text-xs shadow-lg shadow-[#00A76F]/25 cursor-pointer"
-                >
-                  {recharging ? "Connecting..." : `Pay ₹${rechargeAmount} via Razorpay`}
-                </Button>
+                  <X className="w-5 h-5" />
+                </button>
               </div>
-            </form>
+
+              {errorMsg && (
+                <div className="p-3 bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-300 rounded-xl text-xs flex items-start gap-2">
+                  <AlertCircle className="w-4 h-4 mt-0.5 flex-shrink-0" />
+                  <span>{errorMsg}</span>
+                </div>
+              )}
+
+              <div className="p-4 rounded-2xl bg-[#EAFBF1] dark:bg-[#00A76F]/10 border border-[#C8FACD] dark:border-[#00A76F]/20 space-y-1">
+                <p className="text-xs text-[#007856] dark:text-[#5BE49B] font-bold">Recharge for Student:</p>
+                <p className="text-base font-extrabold text-[#1C252E] dark:text-white">
+                  {selectedStudentForRecharge.first_name} {selectedStudentForRecharge.last_name || ""}
+                </p>
+                <p className="text-xs font-mono text-[#00A76F]">Student ID: {selectedStudentForRecharge.admission_number}</p>
+              </div>
+
+              <form onSubmit={handleParentRecharge} className="space-y-4">
+                <div className="space-y-2">
+                  <label className="text-xs font-bold text-[#1C252E] dark:text-white">Choose Recharge Plan</label>
+                  <div className="grid grid-cols-4 gap-2">
+                    {[50, 100, 200, 500].map((amt) => (
+                      <button
+                        key={amt}
+                        type="button"
+                        onClick={() => setRechargeAmount(amt)}
+                        className={`py-3 rounded-2xl text-xs font-extrabold cursor-pointer transition-all ${
+                          rechargeAmount === amt
+                            ? "bg-[#00A76F] text-white shadow-md shadow-[#00A76F]/25 scale-[1.02]"
+                            : "bg-[#F4F6F8] dark:bg-[#1C252E] text-[#637381] border border-[#E5E8EB] dark:border-[#2E3844]"
+                        }`}
+                      >
+                        ₹{amt}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="p-3 rounded-xl bg-[#F4F6F8] dark:bg-[#1C252E] text-xs text-[#637381] dark:text-[#919EAB] space-y-1">
+                  <div className="flex justify-between">
+                    <span>Calling Minutes:</span>
+                    <span className="font-bold text-[#1C252E] dark:text-white">{Math.floor(rechargeAmount / 2)} Minutes</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Per-minute rate:</span>
+                    <span className="font-bold text-[#00A76F]">₹2.00 / Min</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Payment Gateway:</span>
+                    <span className="font-bold text-[#1C252E] dark:text-white">Razorpay (Direct Company Account)</span>
+                  </div>
+                </div>
+
+                <div className="flex justify-end gap-3 pt-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => {
+                      setShowRechargeModal(false);
+                      setErrorMsg(null);
+                    }}
+                    className="rounded-xl font-bold text-xs cursor-pointer"
+                    disabled={recharging}
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    type="submit"
+                    disabled={recharging}
+                    className="bg-[#00A76F] hover:bg-[#007856] text-white rounded-xl font-bold text-xs shadow-lg shadow-[#00A76F]/25 cursor-pointer"
+                  >
+                    {recharging ? "Processing Payment..." : `Pay ₹${rechargeAmount} via Razorpay`}
+                  </Button>
+                </div>
+              </form>
+            </motion.div>
           </div>
-        </div>
-      )}
+        )}
+      </AnimatePresence>
     </div>
   );
 }

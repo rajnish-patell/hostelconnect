@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
+import { motion, useReducedMotion } from "framer-motion";
 import {
   Users,
   Plus,
@@ -58,6 +59,7 @@ export default function AdminStudentsPage() {
   // View Parent Details Modal
   const [viewParentModal, setViewParentModal] = useState(null);
   const [copiedText, setCopiedText] = useState(false);
+  const reduceMotion = useReducedMotion();
 
   const fetchStudents = async () => {
     setLoading(true);
@@ -77,7 +79,28 @@ export default function AdminStudentsPage() {
   };
 
   useEffect(() => {
-    fetchStudents();
+    let ignore = false;
+    async function loadData() {
+      try {
+        const res = await fetch("/api/students");
+        if (res.ok && res.headers.get("content-type")?.includes("application/json")) {
+          const json = await res.json();
+          if (!ignore && json.success) {
+            setStudents(json.data || []);
+          }
+        }
+      } catch (e) {
+        console.error(e);
+      } finally {
+        if (!ignore) {
+          setLoading(false);
+        }
+      }
+    }
+    loadData();
+    return () => {
+      ignore = true;
+    };
   }, []);
 
   const toggleStudentStatus = async (student) => {
@@ -165,25 +188,29 @@ export default function AdminStudentsPage() {
     setErrorMsg(null);
 
     try {
-      const res = await fetch("/api/payments/create-order", {
+      const res = await fetch("/api/payments/school-recharge", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          action: "school_recharge",
           studentId: selectedStudentForRecharge.id,
           amountRupees: rechargeAmount,
+          notes: `Manual recharge by school admin`,
         }),
       });
+
+      const resData = await res.json();
+      if (!res.ok || !resData.success) {
+        throw new Error(resData.error?.message || "Failed to process recharge");
+      }
 
       // Update locally
       setStudents(students.map(s => {
         if (s.id === selectedStudentForRecharge.id) {
-          const currentPaise = s.metadata?.balance_paise || s.balance_paise || 5000;
-          const newPaise = currentPaise + (rechargeAmount * 100);
+          const newBalance = Math.floor(parseFloat(resData.data.newBalance) * 100);
           return {
             ...s,
-            metadata: { ...s.metadata, balance_paise: newPaise },
-            balance_paise: newPaise,
+            metadata: { ...s.metadata, balance_paise: newBalance },
+            balance_paise: newBalance,
           };
         }
         return s;
@@ -245,22 +272,30 @@ export default function AdminStudentsPage() {
     );
   });
 
+  const activeStudents = students.filter((student) => student.is_active).length;
+  const linkedGuardians = students.filter((student) => student.guardians?.length).length;
+  const rosterMetrics = [
+    { label: "Total students", value: students.length, icon: Users, tone: "text-[#00A76F] bg-[#EAFBF1] dark:bg-[#00A76F]/15" },
+    { label: "Calling enabled", value: activeStudents, icon: PhoneCall, tone: "text-blue-600 bg-blue-50 dark:bg-blue-500/15 dark:text-blue-300" },
+    { label: "Parents linked", value: linkedGuardians, icon: UserCheck, tone: "text-violet-600 bg-violet-50 dark:bg-violet-500/15 dark:text-violet-300" },
+  ];
+
   return (
     <div className="space-y-6">
       {/* ─── Header & Add Student CTA ─── */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-extrabold tracking-tight text-[#1C252E] dark:text-white">
-            Student & Parent Roster 👨‍🎓
+            Students & Parents
           </h1>
           <p className="text-xs text-[#919EAB]">
-            School Admin Student Management: Student ID, Parent login credentials, Student ON/OFF switch, and Wallet Recharges.
+            Add a student with their name and parent contact. A simple code is created automatically when needed.
           </p>
         </div>
 
         <Button
           onClick={() => setShowAddModal(true)}
-          className="bg-[#00A76F] hover:bg-[#007856] text-white font-bold text-xs rounded-xl shadow-lg shadow-[#00A76F]/25 h-10 px-4 gap-1.5 cursor-pointer"
+          className="w-full sm:w-auto bg-[#00A76F] hover:bg-[#007856] text-white font-bold text-sm rounded-xl shadow-lg shadow-[#00A76F]/25 h-11 px-4 gap-1.5 cursor-pointer"
         >
           <Plus className="w-4 h-4" /> Add Student & Parent
         </Button>
@@ -282,15 +317,33 @@ export default function AdminStudentsPage() {
       )}
 
       {/* ─── Search Bar ─── */}
-      <div className="flex items-center gap-3 p-3 bg-white dark:bg-[#212B36] rounded-2xl border border-[#E5E8EB] dark:border-[#2E3844] shadow-xs">
+      {!loading && (
+        <div className="grid grid-cols-1 min-[440px]:grid-cols-3 gap-3">
+          {rosterMetrics.map(({ label, value, icon: Icon, tone }, index) => (
+            <motion.div
+              key={label}
+              initial={reduceMotion ? false : { opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: index * 0.06 }}
+              className="minimals-card p-4 flex items-center gap-3"
+            >
+              <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${tone}`}><Icon className="w-5 h-5" /></div>
+              <div><p className="text-xl font-extrabold text-[#1C252E] dark:text-white">{value}</p><p className="text-xs text-[#637381] dark:text-[#919EAB]">{label}</p></div>
+            </motion.div>
+          ))}
+        </div>
+      )}
+
+      <div className="flex items-center gap-3 p-3 bg-white dark:bg-[#212B36] rounded-2xl border border-[#E5E8EB] dark:border-[#2E3844] shadow-xs focus-within:ring-2 focus-within:ring-[#00A76F]/20 focus-within:border-[#00A76F] transition-colors">
         <Search className="w-4 h-4 text-[#919EAB] ml-2" />
         <input
           type="text"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search by student name, Student ID, or parent mobile number..."
+          placeholder="Search by student name, code, or parent mobile number..."
           className="flex-1 bg-transparent text-sm text-[#1C252E] dark:text-white placeholder:text-[#919EAB] focus:outline-none font-medium"
         />
+        {search && <button type="button" onClick={() => setSearch("")} className="p-1.5 rounded-lg text-[#919EAB] hover:text-[#1C252E] dark:hover:text-white hover:bg-[#F4F6F8] dark:hover:bg-[#2E3844]" aria-label="Clear search"><X className="w-4 h-4" /></button>}
       </div>
 
       {/* ─── Students Table ─── */}
@@ -311,7 +364,7 @@ export default function AdminStudentsPage() {
               <thead>
                 <tr className="border-b border-[#F1F3F5] dark:border-[#2E3844] bg-[#F4F6F8]/60 dark:bg-[#1C252E]/60">
                   <th className="px-6 py-4 text-xs font-bold uppercase tracking-wider text-[#919EAB]">Student</th>
-                  <th className="px-6 py-4 text-xs font-bold uppercase tracking-wider text-[#919EAB]">Student ID</th>
+                  <th className="px-6 py-4 text-xs font-bold uppercase tracking-wider text-[#919EAB]">Student code</th>
                   <th className="px-6 py-4 text-xs font-bold uppercase tracking-wider text-[#919EAB]">Linked Parent / Guardian</th>
                   <th className="px-6 py-4 text-xs font-bold uppercase tracking-wider text-[#919EAB]">Calling Wallet</th>
                   <th className="px-6 py-4 text-xs font-bold uppercase tracking-wider text-[#919EAB]">Call Limit</th>
@@ -471,13 +524,12 @@ export default function AdminStudentsPage() {
 
               <div className="grid grid-cols-3 gap-3">
                 <div className="col-span-1 space-y-1.5">
-                  <label className="text-xs font-bold text-[#1C252E] dark:text-white">Student ID *</label>
+                  <label className="text-xs font-bold text-[#1C252E] dark:text-white">Student code <span className="font-medium text-[#919EAB]">(optional)</span></label>
                   <input
                     type="text"
-                    required
                     value={admissionNumber}
                     onChange={(e) => setAdmissionNumber(e.target.value)}
-                    placeholder="STU-1004"
+                    placeholder="Leave blank to auto-create"
                     className="w-full h-11 px-3.5 rounded-xl border border-[#E5E8EB] dark:border-[#2E3844] bg-white dark:bg-[#1C252E] text-sm text-[#1C252E] dark:text-white focus:outline-none focus:ring-2 focus:ring-[#00A76F]/20 focus:border-[#00A76F] font-medium font-mono uppercase"
                   />
                 </div>

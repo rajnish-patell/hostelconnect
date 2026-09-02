@@ -108,7 +108,7 @@ export default function IncomingCallNotification({ user, profile }) {
       if (ringIntervalRef.current) clearInterval(ringIntervalRef.current);
       try { supabaseRef.current?.removeChannel(channel); } catch (_) {}
     };
-  }, []); // Empty — runs only ONCE
+  }, [checkIncomingCalls]);
 
   // Play ring chime when a new call arrives
   useEffect(() => {

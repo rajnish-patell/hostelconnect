@@ -1,13 +1,13 @@
 import { NextResponse } from "next/server";
 import { startCall } from "@/lib/services/call.service";
-import { getCurrentUser } from "@/lib/auth/rbac";
+import { requireCallAccess } from "@/lib/auth/rbac";
 
 export async function POST(request, { params }) {
   try {
     const { id } = await params;
-    const user = await getCurrentUser();
+    const { user } = await requireCallAccess(id);
 
-    const updated = await startCall(id, user?.id || null);
+    const updated = await startCall(id, user.id);
 
     return NextResponse.json({
       success: true,

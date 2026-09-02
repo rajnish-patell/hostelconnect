@@ -3,6 +3,7 @@
 import React, { useState, Suspense } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
+import { motion } from "framer-motion";
 import {
   Video,
   Lock,
@@ -93,7 +94,31 @@ function LoginForm() {
           throw new Error("Please enter your Student ID (Admission Number).");
         }
 
-        // Store active student session in localStorage
+        // ─── SECURITY: Validate Student ID format ───
+        // Only allow alphanumeric, hyphens, underscores (max 50 chars)
+        const studentIdRegex = /^[A-Za-z0-9\-_]{2,50}$/;
+        if (!studentIdRegex.test(cleanIdentifier)) {
+          throw new Error(
+            "Invalid Student ID format. Use letters, numbers, hyphens, or underscores (2-50 characters)."
+          );
+        }
+
+        // ─── SECURITY: Verify Student ID exists on backend ───
+        const verifyRes = await fetch("/api/auth/verify-student-id", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ studentId: cleanIdentifier }),
+        });
+
+        const verifyJson = verifyRes.ok ? await verifyRes.json() : null;
+
+        if (!verifyRes.ok || !verifyJson?.success) {
+          throw new Error(
+            verifyJson?.error?.message || "Student ID not found. Please check and try again."
+          );
+        }
+
+        // Store active student session in localStorage (after validation)
         localStorage.setItem("hc_active_student_id", cleanIdentifier);
         setSuccessMsg(`Welcome, Student (${cleanIdentifier})! Launching calling terminal...`);
         setTimeout(() => {
@@ -162,7 +187,8 @@ function LoginForm() {
           dest = "/staff";
         }
 
-        window.location.href = dest;
+        router.push(dest);
+        router.refresh();
       }, 300);
     } catch (err) {
       setErrorMsg(err.message || "Invalid credentials.");
@@ -215,39 +241,44 @@ function LoginForm() {
   };
 
   return (
-    <div className="w-full max-w-lg mx-auto py-8 px-4">
+    <div className="w-full max-w-[420px] mx-auto space-y-3.5 sm:space-y-4">
       {/* Top Back Link & Theme Toggle */}
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex items-center justify-between px-1">
         <Link
           href="/"
           className="inline-flex items-center gap-1.5 text-xs text-[#637381] hover:text-[#00A76F] font-semibold transition-colors"
         >
-          <ArrowLeft className="w-3.5 h-3.5" /> Back to Home
+          <ArrowLeft className="w-4 h-4" /> Back to Home
         </Link>
         <ThemeToggle />
       </div>
 
-      {/* Brand Header */}
-      <div className="text-center space-y-2 mb-8">
-        <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-[#00A76F] text-white shadow-lg shadow-[#00A76F]/25">
-          <Video className="w-7 h-7" />
+      {/* Compact Brand Header */}
+      <div className="text-center space-y-1">
+        <div className="inline-flex items-center justify-center w-11 h-11 rounded-2xl bg-[#00A76F] text-white shadow-md shadow-[#00A76F]/25 mb-0.5">
+          <Video className="w-5 h-5" />
         </div>
-        <h1 className="text-2xl font-extrabold tracking-tight text-[#1C252E] dark:text-white">
+        <h1 className="text-xl sm:text-2xl font-extrabold tracking-tight text-[#1C252E] dark:text-white">
           HostelConnect
         </h1>
         <p className="text-xs text-[#919EAB]">
-          Child-Safe Video Calling & Hostel Management Portal
+          Child-Safe Video Calling & Hostel Management
         </p>
       </div>
 
-      {/* Card Container */}
-      <div className="bg-white dark:bg-[#212B36] rounded-3xl border border-[#E5E8EB] dark:border-[#2E3844] shadow-xl p-6 sm:p-8 space-y-6">
+      {/* Card Container with Framer Motion */}
+      <motion.div
+        initial={{ opacity: 0, y: 15 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.3 }}
+        className="bg-white dark:bg-[#212B36] rounded-2xl sm:rounded-3xl border border-[#E5E8EB] dark:border-[#2E3844] shadow-xl p-4 sm:p-6 space-y-3.5 sm:space-y-4"
+      >
         {/* Sign In / Sign Up Top Switcher */}
-        <div className="flex p-1 bg-[#F4F6F8] dark:bg-[#1C252E] rounded-2xl">
+        <div className="grid grid-cols-2 p-1 bg-[#F4F6F8] dark:bg-[#1C252E] rounded-xl text-xs sm:text-sm">
           <button
             type="button"
             onClick={() => setActiveMode("signin")}
-            className={`flex-1 py-2.5 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-all ${
+            className={`py-2 px-3 rounded-lg font-bold flex items-center justify-center gap-1.5 transition-all whitespace-nowrap cursor-pointer ${
               activeMode === "signin"
                 ? "bg-white dark:bg-[#212B36] text-[#00A76F] shadow-xs"
                 : "text-[#637381] hover:text-[#1C252E]"
@@ -257,44 +288,58 @@ function LoginForm() {
           </button>
           <Link
             href="/signup"
-            className="flex-1 py-2.5 rounded-xl text-xs font-semibold text-[#637381] hover:text-[#1C252E] flex items-center justify-center gap-1.5 transition-all"
+            className="py-2 px-3 rounded-lg font-semibold text-[#637381] hover:text-[#1C252E] flex items-center justify-center gap-1.5 transition-all whitespace-nowrap text-center"
           >
             <UserPlus className="w-3.5 h-3.5" /> Parent Sign Up
           </Link>
         </div>
 
-        {/* 4 Role Tabs */}
-        <div className="grid grid-cols-4 p-1 bg-[#F4F6F8] dark:bg-[#1C252E] rounded-2xl gap-1">
-          {[
-            { key: "superadmin", label: "Super Admin" },
-            { key: "school", label: "School" },
-            { key: "student", label: "Student" },
-            { key: "parent", label: "Parent" },
-          ].map((tab) => (
-            <button
-              key={tab.key}
-              type="button"
-              onClick={() => handleRoleChange(tab.key)}
-              className={`py-2 rounded-xl text-xs font-bold transition-all truncate px-1 cursor-pointer ${
-                activeRole === tab.key
-                  ? "bg-white dark:bg-[#212B36] text-[#00A76F] shadow-xs"
-                  : "text-[#637381] hover:text-[#1C252E] dark:hover:text-white"
-              }`}
-            >
-              {tab.label}
-            </button>
-          ))}
-        </div>
+        {/* 4 Role Tabs - Compact Single Row */}
+        <div className="space-y-1.5">
+          <div className="grid grid-cols-4 p-1 bg-[#F4F6F8] dark:bg-[#1C252E] rounded-xl gap-0.5 relative">
+            {[
+              { key: "superadmin", label: "Admin", icon: Shield },
+              { key: "school", label: "School", icon: Building },
+              { key: "student", label: "Student", icon: GraduationCap },
+              { key: "parent", label: "Parent", icon: Users },
+            ].map((tab) => {
+              const Icon = tab.icon;
+              const isActive = activeRole === tab.key;
+              return (
+                <button
+                  key={tab.key}
+                  type="button"
+                  onClick={() => handleRoleChange(tab.key)}
+                  className={`relative z-10 py-2 px-1 rounded-lg text-xs font-bold transition-colors cursor-pointer flex flex-col sm:flex-row items-center justify-center gap-1 text-center ${
+                    isActive
+                      ? "text-[#00A76F]"
+                      : "text-[#637381] hover:text-[#1C252E] dark:hover:text-white"
+                  }`}
+                >
+                  <Icon className="w-3.5 h-3.5 shrink-0" />
+                  <span className="text-[11px] sm:text-xs">{tab.label}</span>
+                  {isActive && (
+                    <motion.div
+                      layoutId="activeRoleTab"
+                      className="absolute inset-0 bg-white dark:bg-[#212B36] rounded-lg shadow-xs -z-10"
+                      transition={{ type: "spring", stiffness: 450, damping: 32 }}
+                    />
+                  )}
+                </button>
+              );
+            })}
+          </div>
 
-        {/* Role Helper Info Pill */}
-        <div className="flex items-center gap-2 p-3 rounded-xl bg-[#EAFBF1] dark:bg-[#00A76F]/10 border border-[#C8FACD] dark:border-[#00A76F]/20 text-xs font-medium text-[#007856] dark:text-[#5BE49B]">
-          {getRoleIcon()}
-          <span>
-            {activeRole === "superadmin" && "Super Admin Platform Governance & Pricing Command"}
-            {activeRole === "school" && "School Management, Students Roster & Recharge Control"}
-            {activeRole === "student" && "Instant Student Kiosk Video Calling (Enter Student ID)"}
-            {activeRole === "parent" && "Parent Video Receiver & Student Wallet Recharge"}
-          </span>
+          {/* Active Role Helper Hint */}
+          <p className="text-[11px] text-center text-[#919EAB] flex items-center justify-center gap-1 px-1">
+            <span className="w-1.5 h-1.5 rounded-full bg-[#00A76F] shrink-0" />
+            <span className="truncate">
+              {activeRole === "superadmin" && "Super Admin Platform & Pricing"}
+              {activeRole === "school" && "School Management & Rosters"}
+              {activeRole === "student" && "Student Kiosk (Enter Student ID)"}
+              {activeRole === "parent" && "Parent Video Receiver & Wallet"}
+            </span>
+          </p>
         </div>
 
         {/* Google 1-Click Login (Exclusively For Parents) */}
@@ -304,9 +349,9 @@ function LoginForm() {
               type="button"
               onClick={handleGoogleLogin}
               disabled={loading}
-              className="w-full h-12 rounded-2xl border border-[#E5E8EB] dark:border-[#2E3844] bg-white dark:bg-[#1C252E] hover:bg-[#F4F6F8] dark:hover:bg-[#2A3542] text-sm font-bold text-[#1C252E] dark:text-white flex items-center justify-center gap-3 transition-all shadow-xs cursor-pointer active:scale-[0.98]"
+              className="w-full h-11 rounded-xl border border-[#E5E8EB] dark:border-[#2E3844] bg-white dark:bg-[#1C252E] hover:bg-[#F4F6F8] dark:hover:bg-[#2A3542] text-xs sm:text-sm font-bold text-[#1C252E] dark:text-white flex items-center justify-center gap-2.5 transition-all shadow-xs cursor-pointer active:scale-[0.98]"
             >
-              <svg className="w-5 h-5" viewBox="0 0 24 24">
+              <svg className="w-4 h-4" viewBox="0 0 24 24">
                 <path
                   fill="#4285F4"
                   d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.82-2.4 3.68v3.05h3.88c2.27-2.09 3.665-5.17 3.665-9.17z"
@@ -327,10 +372,10 @@ function LoginForm() {
               <span>Sign In with Google</span>
             </button>
 
-            <div className="relative flex items-center justify-center my-4">
+            <div className="relative flex items-center justify-center my-3">
               <div className="border-t border-[#E5E8EB] dark:border-[#2E3844] w-full" />
-              <span className="bg-white dark:bg-[#212B36] px-3 text-xs text-[#919EAB] font-semibold uppercase tracking-wider absolute">
-                or sign in with password
+              <span className="bg-white dark:bg-[#212B36] px-3 text-[11px] text-[#919EAB] font-semibold uppercase tracking-wider absolute">
+                or with password
               </span>
             </div>
           </div>
@@ -352,49 +397,57 @@ function LoginForm() {
         )}
 
         {/* Form */}
-        <form onSubmit={handleLogin} className="space-y-4">
-          <div className="space-y-1.5">
+        <form onSubmit={handleLogin} className="space-y-3 sm:space-y-3.5">
+          <div className="space-y-1">
             <label className="text-xs font-bold text-[#1C252E] dark:text-white flex items-center gap-1">
               {getIdentifierLabel()} <span className="text-red-500">*</span>
             </label>
             <div className="relative">
               {activeRole === "student" ? (
-                <GraduationCap className="w-4 h-4 text-[#919EAB] absolute left-3.5 top-3.5" />
+                <GraduationCap className="w-4 h-4 text-[#919EAB] absolute left-3.5 top-3" />
               ) : activeRole === "parent" ? (
-                <Phone className="w-4 h-4 text-[#919EAB] absolute left-3.5 top-3.5" />
+                <Phone className="w-4 h-4 text-[#919EAB] absolute left-3.5 top-3" />
               ) : (
-                <Mail className="w-4 h-4 text-[#919EAB] absolute left-3.5 top-3.5" />
+                <Mail className="w-4 h-4 text-[#919EAB] absolute left-3.5 top-3" />
               )}
               <input
                 type="text"
                 required
                 value={identifier}
-                onChange={(e) => setIdentifier(e.target.value)}
+                onChange={(e) => {
+                  let value = e.target.value;
+                  if (activeRole === "student") {
+                    value = value.replace(/[^A-Za-z0-9\-_]/g, "");
+                    value = value.slice(0, 50);
+                  }
+                  setIdentifier(value);
+                }}
                 placeholder={getIdentifierPlaceholder()}
-                className="w-full h-11 pl-10 pr-3.5 rounded-xl border border-[#E5E8EB] dark:border-[#2E3844] bg-white dark:bg-[#1C252E] text-sm text-[#1C252E] dark:text-white placeholder:text-[#919EAB] focus:outline-none focus:ring-2 focus:ring-[#00A76F]/20 focus:border-[#00A76F] font-medium"
+                maxLength={activeRole === "student" ? 50 : 255}
+                className="w-full h-10 sm:h-11 pl-10 pr-3.5 rounded-xl border border-[#E5E8EB] dark:border-[#2E3844] bg-white dark:bg-[#1C252E] text-xs sm:text-sm text-[#1C252E] dark:text-white placeholder:text-[#919EAB] focus:outline-none focus:ring-2 focus:ring-[#00A76F]/20 focus:border-[#00A76F] font-medium"
               />
             </div>
           </div>
 
           {activeRole !== "student" && (
-            <div className="space-y-1.5">
+            <div className="space-y-1">
               <label className="text-xs font-bold text-[#1C252E] dark:text-white flex items-center gap-1">
                 Password <span className="text-red-500">*</span>
               </label>
               <div className="relative">
-                <Lock className="w-4 h-4 text-[#919EAB] absolute left-3.5 top-3.5" />
+                <Lock className="w-4 h-4 text-[#919EAB] absolute left-3.5 top-3" />
                 <input
                   type={showPassword ? "text" : "password"}
                   required
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="••••••••"
-                  className="w-full h-11 pl-10 pr-10 rounded-xl border border-[#E5E8EB] dark:border-[#2E3844] bg-white dark:bg-[#1C252E] text-sm text-[#1C252E] dark:text-white placeholder:text-[#919EAB] focus:outline-none focus:ring-2 focus:ring-[#00A76F]/20 focus:border-[#00A76F] font-medium"
+                  className="w-full h-10 sm:h-11 pl-10 pr-10 rounded-xl border border-[#E5E8EB] dark:border-[#2E3844] bg-white dark:bg-[#1C252E] text-xs sm:text-sm text-[#1C252E] dark:text-white placeholder:text-[#919EAB] focus:outline-none focus:ring-2 focus:ring-[#00A76F]/20 focus:border-[#00A76F] font-medium"
                 />
                 <button
                   type="button"
                   onClick={() => setShowPassword(!showPassword)}
-                  className="absolute right-3.5 top-3.5 text-[#919EAB] hover:text-[#1C252E] focus:outline-none cursor-pointer"
+                  className="absolute right-3.5 top-3 text-[#919EAB] hover:text-[#1C252E] focus:outline-none cursor-pointer"
                 >
                   {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                 </button>
@@ -403,7 +456,7 @@ function LoginForm() {
           )}
 
           {activeRole !== "student" && (
-            <div className="flex justify-end">
+            <div className="flex justify-end pt-0.5">
               <Link
                 href="/forgot-password"
                 className="text-xs text-[#00A76F] hover:underline font-bold"
@@ -416,10 +469,10 @@ function LoginForm() {
           <button
             type="submit"
             disabled={loading}
-            className="w-full h-12 bg-[#00A76F] hover:bg-[#007856] text-white font-bold rounded-2xl shadow-lg shadow-[#00A76F]/25 flex items-center justify-center gap-2 transition-all active:scale-[0.98] cursor-pointer"
+            className="w-full h-11 sm:h-12 bg-[#00A76F] hover:bg-[#007856] text-white font-bold rounded-xl shadow-lg shadow-[#00A76F]/25 flex items-center justify-center gap-2 transition-all active:scale-[0.98] cursor-pointer text-xs sm:text-sm"
           >
             {loading ? (
-              <Loader2 className="w-5 h-5 animate-spin" />
+              <Loader2 className="w-4 h-4 animate-spin" />
             ) : activeRole === "student" ? (
               "Open Calling Kiosk"
             ) : (
@@ -427,14 +480,14 @@ function LoginForm() {
             )}
           </button>
         </form>
-      </div>
+      </motion.div>
     </div>
   );
 }
 
 export default function LoginPage() {
   return (
-    <div className="min-h-screen flex items-center justify-center bg-[#F4F6F8] dark:bg-[#141A21] p-4">
+    <div className="min-h-screen flex flex-col items-center justify-center bg-[#F4F6F8] dark:bg-[#141A21] px-3 py-4 sm:p-6">
       <Suspense fallback={<div className="p-8 text-center text-[#919EAB]">Loading...</div>}>
         <LoginForm />
       </Suspense>

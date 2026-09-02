@@ -29,9 +29,11 @@ export function ThemeProvider({ children }) {
   useEffect(() => {
     const saved = localStorage.getItem("hc_theme");
     const initialTheme = saved === "dark" ? "dark" : "light";
-    setThemeState(initialTheme);
     applyTheme(initialTheme);
-    setMounted(true);
+    requestAnimationFrame(() => {
+      setThemeState(initialTheme);
+      setMounted(true);
+    });
   }, []);
 
   const setTheme = (newTheme) => {

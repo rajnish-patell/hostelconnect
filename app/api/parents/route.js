@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { requireAuth } from "@/lib/auth/rbac";
+import { requireAuth, requireRole } from "@/lib/auth/rbac";
 import { parentSchema, studentGuardianLinkSchema } from "@/lib/validators";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
@@ -8,22 +8,7 @@ import { logAuditEvent } from "@/lib/services/audit.service";
 
 export async function GET(request) {
   try {
-    const url = new URL(request.url);
-    const phoneParam = url.searchParams.get("phone");
     const admin = createAdminClient();
-
-    // If query by phone (public helper for mobile login resolution)
-    if (phoneParam) {
-      const cleanPhone = phoneParam.replace(/\D/g, "");
-      const { data: parent } = await admin
-        .from("parents")
-        .select("id, first_name, last_name, email, phone")
-        .or(`phone.eq.${cleanPhone},phone.ilike.%${cleanPhone.slice(-10)}%`)
-        .limit(1)
-        .maybeSingle();
-
-      return NextResponse.json({ success: true, data: parent });
-    }
 
     const { user, profile } = await requireAuth();
     const supabase = await createClient();
@@ -65,6 +50,12 @@ export async function GET(request) {
       return NextResponse.json({ success: true, data: parent });
     }
 
+    if (profile.role === "PARENT") {
+      return NextResponse.json({ success: false, error: { code: "NOT_FOUND", message: "No parent profile is linked to this account." } }, { status: 404 });
+    }
+
+    await requireRole(["HOSTEL_ADMIN", "WARDEN", "STAFF"]);
+
     // Admin/Staff view
     const { data: parents, error } = await supabase
       .from("parents")
@@ -83,7 +74,7 @@ export async function GET(request) {
 
 export async function POST(request) {
   try {
-    const { user } = await requireAuth();
+    const { user } = await requireRole(["HOSTEL_ADMIN", "WARDEN"]);
     const body = await request.json();
     const admin = createAdminClient();
 

@@ -1,11 +1,11 @@
 import { NextResponse } from "next/server";
 import { endCall } from "@/lib/services/call.service";
-import { getCurrentUser } from "@/lib/auth/rbac";
+import { requireCallAccess } from "@/lib/auth/rbac";
 
 export async function POST(request, { params }) {
   try {
     const { id } = await params;
-    const user = await getCurrentUser();
+    const { user } = await requireCallAccess(id);
     let body = {};
     try {
       body = await request.json();
@@ -14,7 +14,7 @@ export async function POST(request, { params }) {
     }
 
     const endReason = body.endReason || "NORMAL_HANGUP";
-    const updated = await endCall(id, user?.id || null, endReason);
+    const updated = await endCall(id, user.id, endReason);
 
     return NextResponse.json({
       success: true,
