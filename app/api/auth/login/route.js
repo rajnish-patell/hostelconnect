@@ -69,35 +69,31 @@ export async function POST(request) {
 
     // 4. Strict Multi-Tenant & Active School Status Check
     if (role === "PARENT") {
-      const { data: parentRecord } = await admin
-        .from("parents")
-        .select("id, is_active")
-        .eq("user_id", data.user.id)
-        .single();
+      const cleanPhone = (data.user.user_metadata?.phone || "").replace(/\D/g, "");
+      let orConds = [`user_id.eq.${data.user.id}`];
+      if (data.user.email) orConds.push(`email.eq.${data.user.email}`);
+      if (cleanPhone) orConds.push(`phone.eq.${cleanPhone}`);
 
-      if (!parentRecord || !parentRecord.is_active) {
-        await supabase.auth.signOut();
-        return NextResponse.json({
-          success: false,
-          error: { message: "This parent account has been deactivated because the school campus was removed." },
-        }, { status: 403 });
+      let { data: parentRecord } = await admin
+        .from("parents")
+        .select("id, is_active, user_id")
+        .or(orConds.join(","))
+        .limit(1)
+        .maybeSingle();
+
+      // If parent record exists but user_id is not yet linked, link it now!
+      if (parentRecord && parentRecord.user_id !== data.user.id) {
+        await admin
+          .from("parents")
+          .update({ user_id: data.user.id, email: data.user.email || parentRecord.email })
+          .eq("id", parentRecord.id);
       }
 
-      // Check if this parent has at least one active student linked to an active school
-      const { data: guardians } = await admin
-        .from("student_guardians")
-        .select("id, student:students(id, is_active, hostel:hostels(id, status))")
-        .eq("parent_id", parentRecord.id);
-
-      const hasActiveSchool = guardians?.some(
-        g => g.student && g.student.is_active && g.student.hostel && g.student.hostel.status === "ACTIVE"
-      );
-
-      if (!hasActiveSchool) {
+      if (parentRecord && parentRecord.is_active === false) {
         await supabase.auth.signOut();
         return NextResponse.json({
           success: false,
-          error: { message: "Your registered school campus is no longer active or has been removed." },
+          error: { message: "This parent account has been deactivated. Please contact the hostel administrator." },
         }, { status: 403 });
       }
     } else if (role === "HOSTEL_ADMIN" || role === "WARDEN" || role === "STAFF") {

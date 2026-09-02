@@ -26,13 +26,24 @@ export async function GET(request) {
       .range(offset, offset + limit - 1);
 
     if (profile?.role === "PARENT") {
-      // Find parent records by user_id OR phone
+      const cleanPhone = (user.user_metadata?.phone || profile?.phone || "").replace(/\D/g, "");
+      let orConds = [`user_id.eq.${user.id}`];
+      if (user.email) orConds.push(`email.eq.${user.email}`);
+      if (cleanPhone) orConds.push(`phone.eq.${cleanPhone}`);
+
       const { data: parentRecords } = await admin
         .from("parents")
-        .select("id, phone")
-        .eq("user_id", user.id);
+        .select("id, phone, user_id")
+        .or(orConds.join(","));
 
       let parentIds = (parentRecords || []).map((p) => p.id);
+
+      // Auto-link user_id if needed
+      for (const p of (parentRecords || [])) {
+        if (p.user_id !== user.id) {
+          await admin.from("parents").update({ user_id: user.id }).eq("id", p.id);
+        }
+      }
 
       // Also find all students linked to this parent
       let studentIds = [];
